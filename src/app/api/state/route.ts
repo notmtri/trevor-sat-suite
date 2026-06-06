@@ -1,0 +1,430 @@
+import { NextResponse } from "next/server";
+import type {
+  AppState,
+  Assignment,
+  Attempt,
+  Question,
+  Student,
+  TestDefinition,
+} from "@/lib/domain";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
+
+type Row = Record<string, unknown>;
+
+function rows(value: unknown): Row[] {
+  return Array.isArray(value) ? (value as Row[]) : [];
+}
+
+function text(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function number(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseScoreRange(value: unknown): [number, number] | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/^[[(](\d+),(\d+)[)\]]$/);
+  if (!match) return undefined;
+  return [Number(match[1]), Number(match[2])];
+}
+
+export async function GET() {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "Supabase is not configured." },
+      { status: 503 },
+    );
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  const role = user.app_metadata.role as "tutor" | "student" | undefined;
+  if (!role) {
+    return NextResponse.json({ error: "Account role is missing." }, { status: 403 });
+  }
+
+  const [
+    profilesResult,
+    studentsResult,
+    questionsResult,
+    testsResult,
+    assignmentsResult,
+    attemptsResult,
+  ] = await Promise.all([
+    supabase.from("profiles").select("*"),
+    supabase.from("students").select("*"),
+    supabase.from("questions").select("*").order("created_at", {
+      ascending: false,
+    }),
+    supabase.from("tests").select("*").order("created_at", { ascending: false }),
+    supabase
+      .from("assignments")
+      .select("*")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("attempts")
+      .select("*")
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const failed = [
+    profilesResult,
+    studentsResult,
+    questionsResult,
+    testsResult,
+    assignmentsResult,
+    attemptsResult,
+  ].find((result) => result.error);
+  if (failed?.error) {
+    return NextResponse.json({ error: failed.error.message }, { status: 500 });
+  }
+
+  const profileRows = rows(profilesResult.data);
+  const studentRows = rows(studentsResult.data);
+  const questionRows = rows(questionsResult.data);
+  const testRows = rows(testsResult.data);
+  const assignmentRows = rows(assignmentsResult.data);
+  const attemptRows = rows(attemptsResult.data);
+
+  if (
+    role === "student" &&
+    studentRows.some(
+      (student) =>
+        text(student.user_id) === user.id && text(student.status) === "disabled",
+    )
+  ) {
+    return NextResponse.json({ error: "This account is disabled." }, { status: 403 });
+  }
+
+  const versionIds = questionRows
+    .map((question) => text(question.current_version_id))
+    .filter(Boolean);
+  const testIds = testRows.map((test) => text(test.id)).filter(Boolean);
+  const assignmentIds = assignmentRows
+    .map((assignment) => text(assignment.id))
+    .filter(Boolean);
+  const attemptIds = attemptRows.map((attempt) => text(attempt.id)).filter(Boolean);
+
+  const [
+    versionsResult,
+    modulesResult,
+    assignmentStudentsResult,
+    responsesResult,
+  ] = await Promise.all([
+    versionIds.length
+      ? supabase.from("question_versions").select("*").in("id", versionIds)
+      : Promise.resolve({ data: [], error: null }),
+    testIds.length
+      ? supabase
+          .from("test_modules")
+          .select("*")
+          .in("test_id", testIds)
+          .order("module_order")
+      : Promise.resolve({ data: [], error: null }),
+    assignmentIds.length
+      ? supabase
+          .from("assignment_students")
+          .select("*")
+          .in("assignment_id", assignmentIds)
+      : Promise.resolve({ data: [], error: null }),
+    attemptIds.length
+      ? supabase.from("responses").select("*").in("attempt_id", attemptIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const secondaryFailed = [
+    versionsResult,
+    modulesResult,
+    assignmentStudentsResult,
+    responsesResult,
+  ].find((result) => result.error);
+  if (secondaryFailed?.error) {
+    return NextResponse.json(
+      { error: secondaryFailed.error.message },
+      { status: 500 },
+    );
+  }
+
+  const versionRows = rows(versionsResult.data);
+  const moduleRows = rows(modulesResult.data);
+  const moduleIds = moduleRows.map((module) => text(module.id)).filter(Boolean);
+  const sourceDocumentIds = versionRows
+    .map((version) => text(version.source_document_id))
+    .filter(Boolean);
+
+  const [
+    assetsResult,
+    answersResult,
+    moduleQuestionsResult,
+    sourceDocumentsResult,
+  ] = await Promise.all([
+    versionIds.length
+      ? supabase
+          .from("question_assets")
+          .select("*")
+          .in("question_version_id", versionIds)
+          .order("asset_order")
+      : Promise.resolve({ data: [], error: null }),
+    role === "tutor" && versionIds.length
+      ? supabase
+          .from("accepted_answers")
+          .select("*")
+          .in("question_version_id", versionIds)
+      : Promise.resolve({ data: [], error: null }),
+    moduleIds.length
+      ? supabase
+          .from("module_questions")
+          .select("*")
+          .in("module_id", moduleIds)
+          .order("question_order")
+      : Promise.resolve({ data: [], error: null }),
+    role === "tutor" && sourceDocumentIds.length
+      ? supabase
+          .from("source_documents")
+          .select("*")
+          .in("id", sourceDocumentIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const tertiaryFailed = [
+    assetsResult,
+    answersResult,
+    moduleQuestionsResult,
+    sourceDocumentsResult,
+  ].find((result) => result.error);
+  if (tertiaryFailed?.error) {
+    return NextResponse.json(
+      { error: tertiaryFailed.error.message },
+      { status: 500 },
+    );
+  }
+
+  const versionMap = new Map(
+    versionRows.map((version) => [text(version.id), version]),
+  );
+  const sourceDocumentMap = new Map(
+    rows(sourceDocumentsResult.data).map((document) => [
+      text(document.id),
+      document,
+    ]),
+  );
+  const assetRows = rows(assetsResult.data);
+  const answerRows = rows(answersResult.data);
+
+  const questions: Question[] = questionRows.flatMap((question) => {
+    const version = versionMap.get(text(question.current_version_id));
+    if (!version) return [];
+    const versionId = text(version.id);
+    const sourceDocument = sourceDocumentMap.get(
+      text(version.source_document_id),
+    );
+    const mappedAssets = assetRows
+      .filter((asset) => text(asset.question_version_id) === versionId)
+      .map((asset) => ({
+        id: text(asset.id),
+        kind: text(asset.kind) as "prompt" | "rationale",
+        order: number(asset.asset_order),
+        sourcePage: number(asset.source_page),
+        dataUrl: `/api/assets/${text(asset.id)}`,
+        width: number(asset.width),
+        height: number(asset.height),
+      }));
+
+    return [
+      {
+        id: text(question.id),
+        sourceId: text(question.source_id),
+        versionHash: text(version.version_hash),
+        assessment: text(question.assessment, "SAT"),
+        section: text(question.section) as Question["section"],
+        domain: text(question.domain),
+        skill: text(question.skill),
+        difficulty: text(question.difficulty) as Question["difficulty"],
+        responseType: text(version.response_type) as Question["responseType"],
+        acceptedAnswers: answerRows
+          .filter((answer) => text(answer.question_version_id) === versionId)
+          .map((answer) => ({
+            id: text(answer.id),
+            value: text(answer.value),
+            normalizedValue: text(answer.normalized_value),
+          })),
+        promptAssets: mappedAssets.filter((asset) => asset.kind === "prompt"),
+        rationaleAssets: mappedAssets.filter(
+          (asset) => asset.kind === "rationale",
+        ),
+        extractedText:
+          role === "tutor" ? text(version.extracted_text) : "",
+        sourceFileName:
+          role === "tutor"
+            ? text(sourceDocument?.file_name, "Question Bank PDF")
+            : "Private Question Bank",
+        importedAt: text(
+          sourceDocument?.imported_at,
+          text(version.created_at, new Date(0).toISOString()),
+        ),
+        status: text(question.status) as Question["status"],
+        reviewNotes: role === "tutor" ? text(version.review_notes) : undefined,
+      },
+    ];
+  });
+
+  const profileMap = new Map(
+    profileRows.map((profile) => [text(profile.id), profile]),
+  );
+  const responses = rows(responsesResult.data);
+  const students: Student[] = studentRows.map((student) => {
+    const studentId = text(student.user_id);
+    const profile = profileMap.get(studentId);
+    const completed = attemptRows.filter(
+      (attempt) =>
+        text(attempt.student_id) === studentId &&
+        text(attempt.status) === "submitted",
+    );
+    const scored = completed.filter(
+      (attempt) => number(attempt.raw_total) > 0,
+    );
+    const averageAccuracy = scored.length
+      ? scored.reduce(
+          (sum, attempt) =>
+            sum + number(attempt.raw_correct) / number(attempt.raw_total, 1),
+          0,
+        ) / scored.length
+      : 0;
+    return {
+      id: studentId,
+      username: text(profile?.username),
+      displayName: text(profile?.display_name, "Student"),
+      status: text(student.status) as Student["status"],
+      mustChangePassword: Boolean(profile?.must_change_password),
+      timeMultiplier: number(student.time_multiplier, 1) as Student["timeMultiplier"],
+      joinedAt: text(student.joined_at),
+      lastActiveAt: text(student.last_active_at) || undefined,
+      averageAccuracy,
+      assignmentsCompleted: completed.length,
+    };
+  });
+
+  const moduleQuestionRows = rows(moduleQuestionsResult.data);
+  const tests: TestDefinition[] = testRows.map((test) => ({
+    id: text(test.id),
+    title: text(test.title),
+    description: text(test.description),
+    mode: text(test.mode) as TestDefinition["mode"],
+    status: text(test.status) as TestDefinition["status"],
+    routingThreshold: number(test.routing_threshold, 0.6),
+    createdAt: text(test.created_at),
+    modules: moduleRows
+      .filter((module) => text(module.test_id) === text(test.id))
+      .map((module) => ({
+        id: text(module.id),
+        title: text(module.title),
+        section: text(module.section) as Question["section"],
+        durationMinutes: number(module.duration_minutes),
+        route: text(module.route) as "common" | "easier" | "harder",
+        order: number(module.module_order),
+        questions: moduleQuestionRows
+          .filter(
+            (moduleQuestion) =>
+              text(moduleQuestion.module_id) === text(module.id),
+          )
+          .map((moduleQuestion) => ({
+            questionId: text(moduleQuestion.question_id),
+            order: number(moduleQuestion.question_order),
+            unscored: Boolean(moduleQuestion.unscored),
+          })),
+      })),
+  }));
+
+  const assignmentStudentRows = rows(assignmentStudentsResult.data);
+  const assignments: Assignment[] = assignmentRows.map((assignment) => ({
+    id: text(assignment.id),
+    testId: text(assignment.test_id),
+    studentIds: assignmentStudentRows
+      .filter(
+        (assignmentStudent) =>
+          text(assignmentStudent.assignment_id) === text(assignment.id),
+      )
+      .map((assignmentStudent) => text(assignmentStudent.student_id)),
+    title: text(assignment.title),
+    availableAt: text(assignment.available_at),
+    dueAt: text(assignment.due_at),
+    attemptLimit: number(assignment.attempt_limit, 1),
+    feedbackPolicy: text(
+      assignment.feedback_policy,
+    ) as Assignment["feedbackPolicy"],
+    allowResume: Boolean(assignment.allow_resume),
+    status: text(assignment.status) as Assignment["status"],
+  }));
+
+  const attempts: Attempt[] = attemptRows.map((attempt) => {
+    const deadline = text(attempt.server_deadline);
+    const parsedDeadline = deadline ? new Date(deadline).getTime() : 0;
+    const route = text(attempt.route);
+    return {
+      id: text(attempt.id),
+      assignmentId: text(attempt.assignment_id),
+      studentId: text(attempt.student_id),
+      status: text(attempt.status) as Attempt["status"],
+      currentModuleId: text(attempt.current_module_id) || undefined,
+      currentQuestionIndex: number(attempt.current_question_index),
+      answeredCount: number(attempt.answered_count),
+      remainingSeconds: parsedDeadline
+        ? Math.max(0, Math.ceil((parsedDeadline - Date.now()) / 1000))
+        : undefined,
+      connectionStatus: text(
+        attempt.connection_status,
+        "offline",
+      ) as Attempt["connectionStatus"],
+      responses: responses
+        .filter((response) => text(response.attempt_id) === text(attempt.id))
+        .map((response) => ({
+          questionId: text(response.question_id),
+          value: text(response.value),
+          flagged: Boolean(response.flagged),
+          eliminatedChoices: Array.isArray(response.eliminated_choices)
+            ? (response.eliminated_choices as string[])
+            : [],
+          secondsSpent: number(response.seconds_spent),
+          changedCount: number(response.changed_count),
+        })),
+      route:
+        route === "easier" || route === "harder" ? route : undefined,
+      startedAt: text(attempt.started_at) || undefined,
+      submittedAt: text(attempt.submitted_at) || undefined,
+      lastHeartbeatAt: text(attempt.last_heartbeat_at) || undefined,
+      rawCorrect:
+        attempt.raw_correct === null ? undefined : number(attempt.raw_correct),
+      rawTotal:
+        attempt.raw_total === null ? undefined : number(attempt.raw_total),
+      estimatedScore:
+        attempt.estimated_score === null
+          ? undefined
+          : number(attempt.estimated_score),
+      scoreRange: parseScoreRange(attempt.score_range),
+      released: Boolean(attempt.released),
+    };
+  });
+
+  const state: AppState = {
+    questions,
+    students,
+    tests,
+    assignments,
+    attempts,
+  };
+
+  return NextResponse.json(
+    { state },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
+}

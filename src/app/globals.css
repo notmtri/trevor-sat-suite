@@ -1,26 +1,92 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #172033;
+  --muted: #667085;
+  --line: #e4e8f0;
+  --paper: #ffffff;
+  --wash: #f3f6fb;
+  --navy: #233876;
+  --navy-dark: #182856;
+  --blue: #4767d7;
+  --mint: #dff6ef;
+  --green: #147d6f;
+  --gold: #f5b942;
+  --rose: #d85c72;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--wash);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-app);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--line);
+}
+
+html {
+  background: var(--wash);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top right, rgb(71 103 215 / 8%), transparent 28rem),
+    var(--wash);
+  color: var(--ink);
+  font-family: var(--font-app), Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  outline-color: var(--blue);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: #cfd9ff;
+  color: var(--navy-dark);
+}
+
+.card-shadow {
+  box-shadow:
+    0 1px 2px rgb(20 31 58 / 4%),
+    0 10px 30px rgb(20 31 58 / 6%);
+}
+
+.scrollbar-thin {
+  scrollbar-color: #c8cfdd transparent;
+  scrollbar-width: thin;
+}
+
+.question-image {
+  image-rendering: auto;
+  user-select: none;
+}
+
+.focus-ring:focus-visible {
+  outline: 3px solid rgb(71 103 215 / 35%);
+  outline-offset: 2px;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
 }
