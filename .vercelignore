@@ -1,6 +1,6 @@
-.github
-coverage
-playwright-report
-test-results
-tests
-supabase
+/.github
+/coverage
+/playwright-report
+/test-results
+/tests
+/supabase
