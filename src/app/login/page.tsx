@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GraduationCap, LockKeyhole, UserRound } from "lucide-react";
+import {
+  ArrowLeft,
+  GraduationCap,
+  LockKeyhole,
+  UserRound,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FieldLabel, Input } from "@/components/ui/field";
@@ -11,6 +17,7 @@ import {
   isDemoMode,
 } from "@/lib/supabase/client";
 import { studentUsernameToEmail } from "@/lib/auth";
+import { roleHome, safeInternalPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
@@ -21,13 +28,25 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const requestedRole = new URLSearchParams(window.location.search).get(
+        "role",
+      );
+      if (requestedRole === "student" || requestedRole === "tutor") {
+        setRole(requestedRole);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   async function signIn(event: React.FormEvent) {
     event.preventDefault();
     setError("");
     setLoading(true);
     try {
       if (isDemoMode()) {
-        router.push(role === "tutor" ? "/tutor" : "/student");
+        router.push(roleHome(role));
         return;
       }
       const supabase = createSupabaseBrowserClient();
@@ -43,8 +62,11 @@ export default function LoginPage() {
         await supabase!.auth.signOut();
         throw new Error(`This account is not a ${role} account.`);
       }
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next ?? (role === "tutor" ? "/tutor" : "/student"));
+      const next = safeInternalPath(
+        new URLSearchParams(window.location.search).get("next"),
+        roleHome(role),
+      );
+      router.replace(next);
       router.refresh();
     } catch (signInError) {
       setError(
@@ -61,9 +83,13 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-[var(--wash)] p-5">
       <Card className="w-full max-w-md overflow-hidden">
         <div className="bg-[var(--navy)] px-7 py-7 text-white">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-white/15 font-black">
+          <Link
+            href="/"
+            aria-label="Back to landing page"
+            className="focus-ring grid h-11 w-11 place-items-center rounded-xl bg-white/15 font-black hover:bg-white/25"
+          >
             TS
-          </div>
+          </Link>
           <h1 className="mt-5 text-2xl font-black">
             Sign in to Trevor&apos;s SAT Suite
           </h1>
@@ -96,10 +122,11 @@ export default function LoginPage() {
             })}
           </div>
           <div className="mt-5">
-            <FieldLabel>
+            <FieldLabel htmlFor="login-identifier">
               {role === "student" ? "Username" : "Email address"}
             </FieldLabel>
             <Input
+              id="login-identifier"
               autoComplete="username"
               value={identifier}
               onChange={(event) => setIdentifier(event.target.value)}
@@ -108,8 +135,9 @@ export default function LoginPage() {
             />
           </div>
           <div className="mt-4">
-            <FieldLabel>Password</FieldLabel>
+            <FieldLabel htmlFor="login-password">Password</FieldLabel>
             <Input
+              id="login-password"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -136,6 +164,13 @@ export default function LoginPage() {
               Demo mode is active. Choose a role and sign in without credentials.
             </p>
           )}
+          <Link
+            href="/"
+            className="focus-ring mx-auto mt-5 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-semibold text-slate-500 hover:text-[var(--navy)]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to landing page
+          </Link>
         </form>
       </Card>
     </main>

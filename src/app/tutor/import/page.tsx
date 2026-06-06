@@ -317,8 +317,9 @@ export default function ImportQuestionsPage() {
               )}
               <div className="mt-5 grid gap-4">
                 <div>
-                  <FieldLabel>Section</FieldLabel>
+                  <FieldLabel htmlFor="question-section">Section</FieldLabel>
                   <Select
+                    id="question-section"
                     value={activeQuestion.section}
                     onChange={(event) =>
                       updateActive({
@@ -331,8 +332,9 @@ export default function ImportQuestionsPage() {
                   </Select>
                 </div>
                 <div>
-                  <FieldLabel>Domain</FieldLabel>
+                  <FieldLabel htmlFor="question-domain">Domain</FieldLabel>
                   <Input
+                    id="question-domain"
                     value={activeQuestion.domain}
                     onChange={(event) =>
                       updateActive({ domain: event.target.value })
@@ -340,8 +342,9 @@ export default function ImportQuestionsPage() {
                   />
                 </div>
                 <div>
-                  <FieldLabel>Skill</FieldLabel>
+                  <FieldLabel htmlFor="question-skill">Skill</FieldLabel>
                   <Input
+                    id="question-skill"
                     value={activeQuestion.skill}
                     onChange={(event) =>
                       updateActive({ skill: event.target.value })
@@ -350,8 +353,11 @@ export default function ImportQuestionsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <FieldLabel>Difficulty</FieldLabel>
+                    <FieldLabel htmlFor="question-difficulty">
+                      Difficulty
+                    </FieldLabel>
                     <Select
+                      id="question-difficulty"
                       value={activeQuestion.difficulty}
                       onChange={(event) =>
                         updateActive({
@@ -366,8 +372,11 @@ export default function ImportQuestionsPage() {
                     </Select>
                   </div>
                   <div>
-                    <FieldLabel>Response type</FieldLabel>
+                    <FieldLabel htmlFor="question-response-type">
+                      Response type
+                    </FieldLabel>
                     <Select
+                      id="question-response-type"
                       value={activeQuestion.responseType}
                       onChange={(event) =>
                         updateActive({
@@ -382,13 +391,14 @@ export default function ImportQuestionsPage() {
                   </div>
                 </div>
                 <div>
-                  <FieldLabel>
+                  <FieldLabel htmlFor="question-accepted-answers">
                     Accepted answer
                     {activeQuestion.responseType === "student_produced"
                       ? "s (comma separated)"
                       : ""}
                   </FieldLabel>
                   <Input
+                    id="question-accepted-answers"
                     value={activeQuestion.acceptedAnswers
                       .map((answer) => answer.value)
                       .join(", ")}
@@ -402,8 +412,11 @@ export default function ImportQuestionsPage() {
                   />
                 </div>
                 <div>
-                  <FieldLabel>Review notes</FieldLabel>
+                  <FieldLabel htmlFor="question-review-notes">
+                    Review notes
+                  </FieldLabel>
                   <Textarea
+                    id="question-review-notes"
                     rows={3}
                     placeholder="Optional note for this version"
                     value={activeQuestion.reviewNotes ?? ""}

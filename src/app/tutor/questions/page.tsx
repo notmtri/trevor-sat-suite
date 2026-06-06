@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   BookOpenCheck,
   CheckCircle2,
@@ -19,6 +20,7 @@ import { Input, Select } from "@/components/ui/field";
 import type { Question } from "@/lib/domain";
 
 export default function QuestionLibraryPage() {
+  const router = useRouter();
   const { state, updateQuestion } = useAppState();
   const [search, setSearch] = useState("");
   const [section, setSection] = useState("all");
@@ -49,8 +51,12 @@ export default function QuestionLibraryPage() {
           <Button
             variant="secondary"
             icon={<SlidersHorizontal className="h-4 w-4" />}
+            disabled={!state.questions.some(
+              (question) => question.status === "published",
+            )}
+            onClick={() => router.push("/tutor/tests?build=1")}
           >
-            Assisted selection
+            Build test from library
           </Button>
         }
       />

@@ -1,6 +1,16 @@
 import { expect, test } from "@playwright/test";
 import path from "node:path";
 
+async function openMobileNavigationIfNeeded(page: import("@playwright/test").Page) {
+  const landingLink = page.getByRole("link", {
+    name: "Landing page",
+    exact: true,
+  });
+  if (!(await landingLink.isVisible())) {
+    await page.getByRole("button", { name: "Open navigation" }).click();
+  }
+}
+
 test("tutor can reach import and question library workflows", async ({ page }) => {
   await page.goto("/tutor");
   await expect(
@@ -15,6 +25,52 @@ test("tutor can reach import and question library workflows", async ({ page }) =
     page.getByRole("heading", { name: "Import Question Bank PDF" }),
   ).toBeVisible();
   await expect(page.getByText("Drop an export here")).toBeVisible();
+});
+
+test("authenticated navigation reaches the landing page and account settings", async ({
+  page,
+}) => {
+  await page.goto("/tutor");
+  await openMobileNavigationIfNeeded(page);
+  await page
+    .getByRole("link", { name: "Landing page", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Serious SAT practice, with every detail intact.",
+    }),
+  ).toBeVisible();
+
+  await page.goto("/tutor");
+  const accountLink = page.getByRole("link", { name: "Password & account" });
+  if (!(await accountLink.isVisible())) {
+    await page.getByRole("button", { name: "Open navigation" }).click();
+  }
+  await accountLink.click();
+  await expect(
+    page.getByRole("heading", { name: "Change your password" }),
+  ).toBeVisible();
+  await page.getByLabel("New password").fill("private-password-2026");
+  await page.getByLabel("Confirm password").fill("private-password-2026");
+  await page.getByRole("button", { name: "Update password" }).click();
+  await expect(page).toHaveURL(/\/tutor$/);
+});
+
+test("question library opens assisted test building and tests can be duplicated", async ({
+  page,
+}) => {
+  await page.goto("/tutor/questions");
+  await page.getByRole("button", { name: "Build test from library" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Build an assisted draft" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: /Algebra Checkpoint/ }).click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Algebra Checkpoint copy" }),
+  ).toBeVisible();
 });
 
 test("student can launch the demo testing module", async ({ page }) => {

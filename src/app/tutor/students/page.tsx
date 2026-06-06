@@ -309,8 +309,11 @@ export default function StudentsPage() {
                 </Dialog.Description>
                 <div className="mt-5 space-y-4">
                   <div>
-                    <FieldLabel>Display name</FieldLabel>
+                    <FieldLabel htmlFor="student-display-name">
+                      Display name
+                    </FieldLabel>
                     <Input
+                      id="student-display-name"
                       value={form.displayName}
                       onChange={(event) =>
                         setForm((value) => ({
@@ -322,8 +325,11 @@ export default function StudentsPage() {
                     />
                   </div>
                   <div>
-                    <FieldLabel>Username</FieldLabel>
+                    <FieldLabel htmlFor="student-username">
+                      Username
+                    </FieldLabel>
                     <Input
+                      id="student-username"
                       value={form.username}
                       onChange={(event) =>
                         setForm((value) => ({
@@ -337,8 +343,11 @@ export default function StudentsPage() {
                     />
                   </div>
                   <div>
-                    <FieldLabel>Time accommodation</FieldLabel>
+                    <FieldLabel htmlFor="student-time-accommodation">
+                      Time accommodation
+                    </FieldLabel>
                     <Select
+                      id="student-time-accommodation"
                       value={form.timeMultiplier}
                       onChange={(event) =>
                         setForm((value) => ({

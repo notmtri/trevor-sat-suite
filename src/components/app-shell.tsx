@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   FileUp,
   GraduationCap,
+  House,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -75,19 +76,29 @@ export function AppShell({
   const nav = (
     <>
       <div className="flex h-20 items-center gap-3 border-b px-5">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--navy)] text-sm font-black text-white">
-          TS
-        </div>
-        {!collapsed && (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-extrabold text-[var(--navy-dark)]">
-              Trevor&apos;s SAT Suite
-            </p>
-            <p className="text-xs text-[var(--muted)]">
-              {role === "tutor" ? "Tutor workspace" : "Student workspace"}
-            </p>
+        <Link
+          href="/"
+          title={collapsed ? "Go to landing page" : undefined}
+          onClick={() => setMobileOpen(false)}
+          className={cn(
+            "focus-ring flex min-w-0 items-center gap-3 rounded-xl",
+            collapsed && "mx-auto",
+          )}
+        >
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--navy)] text-sm font-black text-white">
+            TS
           </div>
-        )}
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-extrabold text-[var(--navy-dark)]">
+                Trevor&apos;s SAT Suite
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                {role === "tutor" ? "Tutor workspace" : "Student workspace"}
+              </p>
+            </div>
+          )}
+        </Link>
       </div>
       <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto p-3">
         {links.map(({ href, label, icon: Icon }) => {
@@ -115,16 +126,33 @@ export function AppShell({
         })}
       </nav>
       <div className="space-y-1 border-t p-3">
-        <button
+        <Link
+          href="/"
+          title={collapsed ? "Landing page" : undefined}
+          onClick={() => setMobileOpen(false)}
           className={cn(
             "focus-ring flex h-10 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-500 hover:bg-slate-100",
             collapsed && "justify-center px-0",
           )}
-          type="button"
+        >
+          <House className="h-5 w-5" />
+          {!collapsed && "Landing page"}
+        </Link>
+        <Link
+          href={{
+            pathname: "/change-password",
+            query: { next: pathname },
+          }}
+          title={collapsed ? "Password & account" : undefined}
+          onClick={() => setMobileOpen(false)}
+          className={cn(
+            "focus-ring flex h-10 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-500 hover:bg-slate-100",
+            collapsed && "justify-center px-0",
+          )}
         >
           <Settings className="h-5 w-5" />
-          {!collapsed && "Settings"}
-        </button>
+          {!collapsed && "Password & account"}
+        </Link>
         <button
           type="button"
           onClick={() => void signOut()}

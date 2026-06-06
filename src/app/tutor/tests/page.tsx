@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowDown,
@@ -46,6 +46,24 @@ export default function TestsPage() {
     [state.questions],
   );
   const activeTest = state.tests.find((test) => test.id === activeTestId);
+  const activeStudents = state.students.filter(
+    (student) => student.status === "active",
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("build") !== "1") return;
+      setBuilderOpen(true);
+      url.searchParams.delete("build");
+      window.history.replaceState(
+        null,
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   function buildDraft() {
     const id = crypto.randomUUID();
@@ -126,17 +144,33 @@ export default function TestsPage() {
     });
   }
 
-  function assignTest() {
+  function duplicateActiveTest() {
     if (!activeTest) return;
+    const duplicate: TestDefinition = {
+      ...activeTest,
+      id: crypto.randomUUID(),
+      title: `${activeTest.title} copy`,
+      status: "draft",
+      createdAt: new Date().toISOString(),
+      modules: activeTest.modules.map((module) => ({
+        ...module,
+        id: crypto.randomUUID(),
+        questions: module.questions.map((question) => ({ ...question })),
+      })),
+    };
+    addTest(duplicate);
+    setActiveTestId(duplicate.id);
+  }
+
+  function assignTest() {
+    if (!activeTest || !activeStudents.length) return;
     const availableAt = new Date();
     const dueAt = new Date(availableAt);
     dueAt.setDate(dueAt.getDate() + 7);
     const assignment: Assignment = {
       id: crypto.randomUUID(),
       testId: activeTest.id,
-      studentIds: state.students
-        .filter((student) => student.status === "active")
-        .map((student) => student.id),
+      studentIds: activeStudents.map((student) => student.id),
       title: activeTest.title,
       availableAt: availableAt.toISOString(),
       dueAt: dueAt.toISOString(),
@@ -226,6 +260,7 @@ export default function TestsPage() {
                 <Button
                   variant="secondary"
                   icon={<Copy className="h-4 w-4" />}
+                  onClick={duplicateActiveTest}
                 >
                   Duplicate
                 </Button>
@@ -346,7 +381,10 @@ export default function TestsPage() {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
-            <Dialog.Close className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100">
+            <Dialog.Close
+              aria-label="Close"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
+            >
               <X className="h-5 w-5" />
             </Dialog.Close>
             <Dialog.Title className="text-xl font-black">
@@ -358,16 +396,18 @@ export default function TestsPage() {
             </Dialog.Description>
             <div className="mt-5 space-y-4">
               <div>
-                <FieldLabel>Test title</FieldLabel>
+                <FieldLabel htmlFor="test-title">Test title</FieldLabel>
                 <Input
+                  id="test-title"
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder="e.g. Functions Review"
                 />
               </div>
               <div>
-                <FieldLabel>Mode</FieldLabel>
+                <FieldLabel htmlFor="test-mode">Mode</FieldLabel>
                 <Select
+                  id="test-mode"
                   value={mode}
                   onChange={(event) =>
                     setMode(event.target.value as "practice" | "exam")
@@ -399,7 +439,10 @@ export default function TestsPage() {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
-            <Dialog.Close className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100">
+            <Dialog.Close
+              aria-label="Close"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
+            >
               <X className="h-5 w-5" />
             </Dialog.Close>
             <Dialog.Title className="text-xl font-black">
@@ -414,15 +457,18 @@ export default function TestsPage() {
                 <Users className="h-5 w-5 text-[var(--blue)]" />
                 <div>
                   <p className="text-sm font-bold">
-                    {state.students.filter((student) => student.status === "active").length} active students
+                    {activeStudents.length} active students
                   </p>
                   <p className="text-xs text-slate-500">All selected</p>
                 </div>
               </div>
             </div>
             <div className="mt-4">
-              <FieldLabel>Feedback release</FieldLabel>
+              <FieldLabel htmlFor="feedback-release">
+                Feedback release
+              </FieldLabel>
               <Select
+                id="feedback-release"
                 value={feedbackPolicy}
                 onChange={(event) =>
                   setFeedbackPolicy(event.target.value as FeedbackPolicy)
@@ -436,10 +482,16 @@ export default function TestsPage() {
             <Button
               className="mt-6 w-full"
               icon={<Check className="h-4 w-4" />}
+              disabled={!activeStudents.length}
               onClick={assignTest}
             >
               Publish assignment
             </Button>
+            {!activeStudents.length && (
+              <p className="mt-3 text-center text-sm font-semibold text-amber-700">
+                Add or enable a student before publishing this assignment.
+              </p>
+            )}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

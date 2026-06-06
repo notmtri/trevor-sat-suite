@@ -1,15 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { KeyRound } from "lucide-react";
+import { ArrowLeft, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FieldLabel, Input } from "@/components/ui/field";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  createSupabaseBrowserClient,
+  isDemoMode,
+} from "@/lib/supabase/client";
+import {
+  roleHome,
+  safeInternalPath,
+  type AppRole,
+} from "@/lib/navigation";
 
 export default function ChangePasswordPage() {
-  const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
@@ -26,17 +33,30 @@ export default function ChangePasswordPage() {
       return;
     }
     setLoading(true);
+    setError("");
     try {
       const supabase = createSupabaseBrowserClient();
-      if (!supabase) {
-        router.replace("/student");
+      const requestedDestination = safeInternalPath(
+        new URLSearchParams(window.location.search).get("next"),
+        "/student",
+      );
+      if (isDemoMode() || !supabase) {
+        window.location.replace(requestedDestination);
         return;
       }
-      const { data } = await supabase.auth.getUser();
+      const { data, error: userError } = await supabase.auth.getUser();
+      if (userError || !data.user) {
+        throw userError ?? new Error("Your session has expired.");
+      }
+      const role = data.user.app_metadata.role as AppRole | undefined;
+      const destination = safeInternalPath(
+        new URLSearchParams(window.location.search).get("next"),
+        roleHome(role),
+      );
       const { error: passwordError } = await supabase.auth.updateUser({
         password,
         data: {
-          ...data.user?.user_metadata,
+          ...data.user.user_metadata,
           must_change_password: false,
         },
       });
@@ -47,10 +67,11 @@ export default function ChangePasswordPage() {
           must_change_password: false,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", data.user?.id);
-      if (profileError) throw profileError;
-      router.replace("/student");
-      router.refresh();
+        .eq("id", data.user.id);
+      if (profileError) {
+        console.error("Password changed, but profile sync failed:", profileError);
+      }
+      window.location.replace(destination);
     } catch (updateError) {
       setError(
         updateError instanceof Error
@@ -68,13 +89,15 @@ export default function ChangePasswordPage() {
         <div className="grid h-12 w-12 place-items-center rounded-xl bg-blue-50 text-[var(--navy)]">
           <KeyRound className="h-6 w-6" />
         </div>
-        <h1 className="mt-5 text-2xl font-black">Choose a private password</h1>
+        <h1 className="mt-5 text-2xl font-black">Change your password</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Your temporary password cannot be used again after this change.
+          Use at least 10 characters. After the update, you will return to your
+          workspace automatically.
         </p>
         <form className="mt-6" onSubmit={updatePassword}>
-          <FieldLabel>New password</FieldLabel>
+          <FieldLabel htmlFor="new-password">New password</FieldLabel>
           <Input
+            id="new-password"
             type="password"
             autoComplete="new-password"
             value={password}
@@ -82,8 +105,9 @@ export default function ChangePasswordPage() {
             required
           />
           <div className="mt-4">
-            <FieldLabel>Confirm password</FieldLabel>
+            <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
             <Input
+              id="confirm-password"
               type="password"
               autoComplete="new-password"
               value={confirmation}
@@ -100,6 +124,13 @@ export default function ChangePasswordPage() {
             Update password
           </Button>
         </form>
+        <Link
+          href="/"
+          className="focus-ring mx-auto mt-5 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-semibold text-slate-500 hover:text-[var(--navy)]"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Landing page
+        </Link>
       </Card>
     </main>
   );
