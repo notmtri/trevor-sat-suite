@@ -26,6 +26,7 @@ import {
 import {
   persistAssignment,
   persistQuestionChanges,
+  persistQuestionDelete,
   persistStudentChanges,
   persistTest,
 } from "@/lib/supabase/mutations";
@@ -46,6 +47,7 @@ type AppStateContextValue = {
   refresh: () => Promise<void>;
   addQuestions: (questions: Question[]) => void;
   updateQuestion: (id: string, changes: Partial<Question>) => void;
+  deleteQuestion: (id: string) => Promise<void>;
   addStudent: (student: Student) => void;
   updateStudent: (id: string, changes: Partial<Student>) => void;
   addTest: (test: TestDefinition) => void;
@@ -154,6 +156,34 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [persist],
   );
 
+  const deleteQuestion = useCallback(
+    async (id: string) => {
+      const usedByTest = state.tests.some((test) =>
+        test.modules.some((module) =>
+          module.questions.some((question) => question.questionId === id),
+        ),
+      );
+      const usedByAttempt = state.attempts.some((attempt) =>
+        attempt.responses.some((response) => response.questionId === id),
+      );
+      if (usedByTest || usedByAttempt) {
+        throw new Error(
+          usedByAttempt
+            ? "This question has student responses and cannot be deleted."
+            : "Remove this question from every test before deleting it.",
+        );
+      }
+      if (!demo && isSupabaseConfigured()) {
+        await persistQuestionDelete(id);
+      }
+      setState((current) => ({
+        ...current,
+        questions: current.questions.filter((question) => question.id !== id),
+      }));
+    },
+    [demo, state.attempts, state.tests],
+  );
+
   const addStudent = useCallback((student: Student) => {
     setState((current) => ({
       ...current,
@@ -230,6 +260,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       addQuestions,
       updateQuestion,
+      deleteQuestion,
       addStudent,
       updateStudent,
       addTest,
@@ -245,6 +276,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       addQuestions,
       updateQuestion,
+      deleteQuestion,
       addStudent,
       updateStudent,
       addTest,

@@ -11,6 +11,7 @@ import {
   FileText,
   Plus,
   Sparkles,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -41,13 +42,23 @@ export default function TestsPage() {
   const [mode, setMode] = useState<"practice" | "exam">("practice");
   const [feedbackPolicy, setFeedbackPolicy] =
     useState<FeedbackPolicy>("after_submission");
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [studentSearch, setStudentSearch] = useState("");
   const publishedQuestions = useMemo(
     () => state.questions.filter((question) => question.status === "published"),
     [state.questions],
   );
   const activeTest = state.tests.find((test) => test.id === activeTestId);
+  const activeTestAssigned = state.assignments.some(
+    (assignment) => assignment.testId === activeTestId,
+  );
   const activeStudents = state.students.filter(
     (student) => student.status === "active",
+  );
+  const filteredStudents = activeStudents.filter((student) =>
+    `${student.displayName} ${student.username}`
+      .toLowerCase()
+      .includes(studentSearch.trim().toLowerCase()),
   );
 
   useEffect(() => {
@@ -144,6 +155,29 @@ export default function TestsPage() {
     });
   }
 
+  function removeQuestion(
+    test: TestDefinition,
+    moduleId: string,
+    questionId: string,
+  ) {
+    if (activeTestAssigned) return;
+    updateTest(test.id, {
+      modules: test.modules.map((module) =>
+        module.id !== moduleId
+          ? module
+          : {
+              ...module,
+              questions: module.questions
+                .filter((question) => question.questionId !== questionId)
+                .map((question, index) => ({
+                  ...question,
+                  order: index + 1,
+                })),
+            },
+      ),
+    });
+  }
+
   function duplicateActiveTest() {
     if (!activeTest) return;
     const duplicate: TestDefinition = {
@@ -163,14 +197,14 @@ export default function TestsPage() {
   }
 
   function assignTest() {
-    if (!activeTest || !activeStudents.length) return;
+    if (!activeTest || !selectedStudentIds.length) return;
     const availableAt = new Date();
     const dueAt = new Date(availableAt);
     dueAt.setDate(dueAt.getDate() + 7);
     const assignment: Assignment = {
       id: crypto.randomUUID(),
       testId: activeTest.id,
-      studentIds: activeStudents.map((student) => student.id),
+      studentIds: selectedStudentIds,
       title: activeTest.title,
       availableAt: availableAt.toISOString(),
       dueAt: dueAt.toISOString(),
@@ -182,6 +216,21 @@ export default function TestsPage() {
     addAssignment(assignment);
     updateTest(activeTest.id, { status: "published" });
     setAssignmentOpen(false);
+    setStudentSearch("");
+  }
+
+  function openAssignmentDialog() {
+    setSelectedStudentIds(activeStudents.map((student) => student.id));
+    setStudentSearch("");
+    setAssignmentOpen(true);
+  }
+
+  function toggleStudent(studentId: string) {
+    setSelectedStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId],
+    );
   }
 
   return (
@@ -267,7 +316,7 @@ export default function TestsPage() {
                 <Button
                   icon={<CalendarClock className="h-4 w-4" />}
                   disabled={!activeTest.modules.length}
-                  onClick={() => setAssignmentOpen(true)}
+                  onClick={openAssignmentDialog}
                 >
                   Assign
                 </Button>
@@ -282,6 +331,13 @@ export default function TestsPage() {
                   Add easier and harder Module 2 branches before publishing a
                   full adaptive simulation. Operational College Board scoring is
                   not reproduced.
+                </div>
+              )}
+              {activeTestAssigned && (
+                <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                  This test has been assigned, so its question order and
+                  contents are locked. Duplicate it to create an editable
+                  version without changing student attempts.
                 </div>
               )}
               {activeTest.modules.length ? (
@@ -331,7 +387,7 @@ export default function TestsPage() {
                                   size="sm"
                                   variant="ghost"
                                   icon={<ArrowUp className="h-4 w-4" />}
-                                  disabled={index === 0}
+                                  disabled={activeTestAssigned || index === 0}
                                   onClick={() =>
                                     moveQuestion(activeTest, module.id, index, -1)
                                   }
@@ -340,9 +396,26 @@ export default function TestsPage() {
                                   size="sm"
                                   variant="ghost"
                                   icon={<ArrowDown className="h-4 w-4" />}
-                                  disabled={index === module.questions.length - 1}
+                                  disabled={
+                                    activeTestAssigned ||
+                                    index === module.questions.length - 1
+                                  }
                                   onClick={() =>
                                     moveQuestion(activeTest, module.id, index, 1)
+                                  }
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon={<Trash2 className="h-4 w-4" />}
+                                  aria-label={`Remove question ${question?.sourceId ?? index + 1}`}
+                                  disabled={activeTestAssigned}
+                                  onClick={() =>
+                                    removeQuestion(
+                                      activeTest,
+                                      module.id,
+                                      item.questionId,
+                                    )
                                   }
                                 />
                               </div>
@@ -435,7 +508,13 @@ export default function TestsPage() {
         </Dialog.Portal>
       </Dialog.Root>
 
-      <Dialog.Root open={assignmentOpen} onOpenChange={setAssignmentOpen}>
+      <Dialog.Root
+        open={assignmentOpen}
+        onOpenChange={(open) => {
+          setAssignmentOpen(open);
+          if (!open) setStudentSearch("");
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
@@ -450,17 +529,86 @@ export default function TestsPage() {
             </Dialog.Title>
             <Dialog.Description className="mt-1 text-sm text-slate-500">
               This assignment opens now, is due in seven days, allows one
-              attempt, and respects each student&apos;s time multiplier.
+              attempt, and respects each selected student&apos;s time
+              multiplier.
             </Dialog.Description>
-            <div className="mt-5 rounded-xl border p-4">
-              <div className="flex items-center gap-3">
-                <Users className="h-5 w-5 text-[var(--blue)]" />
-                <div>
-                  <p className="text-sm font-bold">
-                    {activeStudents.length} active students
-                  </p>
-                  <p className="text-xs text-slate-500">All selected</p>
+            <div className="mt-5 overflow-hidden rounded-xl border">
+              <div className="border-b bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <Users className="h-5 w-5 text-[var(--blue)]" />
+                    <div>
+                      <p className="text-sm font-bold">
+                        {selectedStudentIds.length} of {activeStudents.length}{" "}
+                        selected
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Choose exactly who receives this assignment
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 text-xs font-bold">
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-[var(--blue)] hover:bg-blue-50"
+                      onClick={() =>
+                        setSelectedStudentIds(
+                          activeStudents.map((student) => student.id),
+                        )
+                      }
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100"
+                      onClick={() => setSelectedStudentIds([])}
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
+                {activeStudents.length > 5 && (
+                  <Input
+                    className="mt-3"
+                    value={studentSearch}
+                    onChange={(event) => setStudentSearch(event.target.value)}
+                    placeholder="Search students"
+                    aria-label="Search students"
+                  />
+                )}
+              </div>
+              <div className="scrollbar-thin max-h-64 divide-y overflow-y-auto">
+                {filteredStudents.map((student) => {
+                  const checked = selectedStudentIds.includes(student.id);
+                  return (
+                    <label
+                      key={student.id}
+                      className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleStudent(student.id)}
+                        className="h-4 w-4 rounded border-slate-300 accent-[var(--navy)]"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold">
+                          {student.displayName}
+                        </p>
+                        <p className="truncate text-xs text-slate-500">
+                          @{student.username}
+                        </p>
+                      </div>
+                      <Badge>{student.timeMultiplier}× time</Badge>
+                    </label>
+                  );
+                })}
+                {!filteredStudents.length && (
+                  <p className="p-5 text-center text-sm text-slate-500">
+                    No active students match this search.
+                  </p>
+                )}
               </div>
             </div>
             <div className="mt-4">
@@ -482,14 +630,15 @@ export default function TestsPage() {
             <Button
               className="mt-6 w-full"
               icon={<Check className="h-4 w-4" />}
-              disabled={!activeStudents.length}
+              disabled={!selectedStudentIds.length}
               onClick={assignTest}
             >
-              Publish assignment
+              Publish to {selectedStudentIds.length} student
+              {selectedStudentIds.length === 1 ? "" : "s"}
             </Button>
-            {!activeStudents.length && (
+            {!selectedStudentIds.length && (
               <p className="mt-3 text-center text-sm font-semibold text-amber-700">
-                Add or enable a student before publishing this assignment.
+                Select at least one active student before publishing.
               </p>
             )}
           </Dialog.Content>

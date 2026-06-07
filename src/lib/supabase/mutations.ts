@@ -7,7 +7,11 @@ import type {
   TestDefinition,
 } from "@/lib/domain";
 
-async function request(path: string, method: "POST" | "PATCH", body: unknown) {
+async function request(
+  path: string,
+  method: "POST" | "PATCH" | "DELETE",
+  body: unknown,
+) {
   const response = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -33,6 +37,10 @@ export function persistQuestionChanges(
     skill: changes.skill,
     difficulty: changes.difficulty,
   });
+}
+
+export function persistQuestionDelete(id: string) {
+  return request("/api/admin/questions", "DELETE", { id });
 }
 
 export function persistStudentChanges(id: string, changes: Partial<Student>) {

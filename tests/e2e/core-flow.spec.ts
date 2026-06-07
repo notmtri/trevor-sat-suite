@@ -73,6 +73,81 @@ test("question library opens assisted test building and tests can be duplicated"
   ).toBeVisible();
 });
 
+test("tutor can assign a test to one specific student", async ({ page }) => {
+  await page.goto("/tutor/tests");
+  await page
+    .getByRole("button", { name: /Algebra Checkpoint/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Assign", exact: true }).click();
+  await expect(page.getByText("3 of 3 selected")).toBeVisible();
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("checkbox", { name: /Linh Tran/ }).check();
+  await page
+    .getByRole("button", { name: "Publish to 1 student" })
+    .click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const saved = localStorage.getItem("trevors-sat-suite-state-v1");
+        if (!saved) return false;
+        const state = JSON.parse(saved) as {
+          assignments: Array<{ studentIds: string[] }>;
+        };
+        return state.assignments.some(
+          (assignment) =>
+            assignment.studentIds.length === 1 &&
+            assignment.studentIds[0] === "student-linh",
+        );
+      }),
+    )
+    .toBe(true);
+});
+
+test("tutor can manually import and delete an unused question", async ({
+  page,
+}) => {
+  const imagePath = path.resolve(process.cwd(), "public/trevor-hero.png");
+  await page.goto("/tutor/import/manual");
+  await expect(
+    page.getByRole("heading", { name: "Add a question manually" }),
+  ).toBeVisible();
+  await page.getByLabel("Question ID").fill("manual-e2e-unused");
+  await page.getByLabel("Domain").fill("Algebra");
+  await page.getByLabel("Skill").fill("Linear equations");
+  await page.getByLabel("Question image").setInputFiles(imagePath);
+  await page.getByLabel("Choices image").setInputFiles(imagePath);
+  await page.getByLabel("Rationale image").setInputFiles(imagePath);
+  await page.getByRole("button", { name: "Save and publish" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Question library" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: /manual-e2e-unused/i })
+    .click();
+  await page.getByRole("button", { name: "Delete question" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Delete manual-e2e-unused?" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Delete permanently" }).click();
+  await expect(page.getByText("manual-e2e-unused")).toHaveCount(0);
+});
+
+test("questions used by assigned tests are protected from deletion", async ({
+  page,
+}) => {
+  await page.goto("/tutor/questions");
+  await page.getByRole("button", { name: /ac472881/i }).click();
+  await expect(
+    page.getByText(/Used in 1 test.*Remove it from those tests/i),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Delete question" }),
+  ).toBeDisabled();
+});
+
 test("student can launch the demo testing module", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

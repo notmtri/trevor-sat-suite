@@ -6,8 +6,10 @@ import {
   BookOpenCheck,
   CheckCircle2,
   Filter,
+  ImagePlus,
   Search,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -21,11 +23,14 @@ import type { Question } from "@/lib/domain";
 
 export default function QuestionLibraryPage() {
   const router = useRouter();
-  const { state, updateQuestion } = useAppState();
+  const { state, updateQuestion, deleteQuestion } = useAppState();
   const [search, setSearch] = useState("");
   const [section, setSection] = useState("all");
   const [difficulty, setDifficulty] = useState("all");
   const [selected, setSelected] = useState<Question | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const filtered = useMemo(
     () =>
@@ -40,6 +45,34 @@ export default function QuestionLibraryPage() {
       }),
     [state.questions, search, section, difficulty],
   );
+  const selectedTestCount = selected
+    ? state.tests.filter((test) =>
+        test.modules.some((module) =>
+          module.questions.some(
+            (question) => question.questionId === selected.id,
+          ),
+        ),
+      ).length
+    : 0;
+
+  async function removeSelectedQuestion() {
+    if (!selected) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteQuestion(selected.id);
+      setDeleteOpen(false);
+      setSelected(null);
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "The question could not be deleted.",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <>
@@ -48,16 +81,25 @@ export default function QuestionLibraryPage() {
         title="Question library"
         description="Search, review, and organize the exact-image questions available for tests and practice."
         actions={
-          <Button
-            variant="secondary"
-            icon={<SlidersHorizontal className="h-4 w-4" />}
-            disabled={!state.questions.some(
-              (question) => question.status === "published",
-            )}
-            onClick={() => router.push("/tutor/tests?build=1")}
-          >
-            Build test from library
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              icon={<ImagePlus className="h-4 w-4" />}
+              onClick={() => router.push("/tutor/import/manual")}
+            >
+              Add manually
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<SlidersHorizontal className="h-4 w-4" />}
+              disabled={!state.questions.some(
+                (question) => question.status === "published",
+              )}
+              onClick={() => router.push("/tutor/tests?build=1")}
+            >
+              Build test from library
+            </Button>
+          </div>
         }
       />
 
@@ -229,6 +271,25 @@ export default function QuestionLibraryPage() {
                         Publish question
                       </Button>
                     )}
+                    {selectedTestCount > 0 && (
+                      <p className="rounded-xl bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-800">
+                        Used in {selectedTestCount} test
+                        {selectedTestCount === 1 ? "" : "s"}. Remove it from
+                        those tests before deleting it.
+                      </p>
+                    )}
+                    <Button
+                      variant="danger"
+                      className="w-full"
+                      icon={<Trash2 className="h-4 w-4" />}
+                      disabled={selectedTestCount > 0}
+                      onClick={() => {
+                        setDeleteError("");
+                        setDeleteOpen(true);
+                      }}
+                    >
+                      Delete question
+                    </Button>
                     <Dialog.Close asChild>
                       <Button variant="secondary" className="w-full">
                         Close
@@ -238,6 +299,39 @@ export default function QuestionLibraryPage() {
                 </div>
               </div>
             )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[60] bg-slate-950/45" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
+            <Dialog.Title className="text-xl font-black">
+              Delete {selected?.sourceId}?
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm leading-6 text-slate-600">
+              This permanently removes the question, its answer key, prompt
+              images, and rationale images. This cannot be undone.
+            </Dialog.Description>
+            {deleteError && (
+              <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary">Cancel</Button>
+              </Dialog.Close>
+              <Button
+                variant="danger"
+                icon={<Trash2 className="h-4 w-4" />}
+                loading={deleting}
+                onClick={() => void removeSelectedQuestion()}
+              >
+                Delete permanently
+              </Button>
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

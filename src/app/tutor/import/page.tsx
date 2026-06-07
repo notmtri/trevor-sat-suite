@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -10,6 +11,7 @@ import {
   FileCheck2,
   FileUp,
   Image as ImageIcon,
+  ImagePlus,
   LoaderCircle,
   RotateCcw,
   ShieldCheck,
@@ -130,6 +132,14 @@ export default function ImportQuestionsPage() {
         eyebrow="Question library"
         title="Import Question Bank PDF"
         description="Prompts, equations, graphs, choices, and rationales are rendered directly from the PDF as lossless 3× images."
+        actions={
+          <Link
+            href="/tutor/import/manual"
+            className="focus-ring inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-bold hover:bg-slate-50"
+          >
+            <ImagePlus className="h-4 w-4" /> Manual image import
+          </Link>
+        }
       />
 
       {stage === "upload" && (
