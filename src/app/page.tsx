@@ -51,12 +51,12 @@ export default function Home() {
               Built for one-on-one SAT tutoring
             </div>
             <h1 className="max-w-3xl text-5xl font-black leading-[1.08] tracking-tight text-[var(--navy-dark)] sm:text-6xl">
-              Serious SAT practice, with every detail intact.
+              Serious SAT practice, with realistic testing experience.
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              Import official Question Bank exports as exact images, assign
-              Bluebook-inspired practice, and see where every student gains or
-              loses time.
+              Practice tutor-approved SAT question from College Board&apos;s
+              official question bank. Experience a painstakingly designed testing
+              interface.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
@@ -107,7 +107,7 @@ export default function Home() {
           {[
             [
               FileImage,
-              "Pixel-faithful import",
+              "Razor-sharp display",
               "Equations, graphs, tables, and choices stay exactly as exported.",
             ],
             [

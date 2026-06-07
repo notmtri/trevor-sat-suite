@@ -33,13 +33,25 @@ export async function GET(
   }
   const { data: signed, error: signedError } = await admin.storage
     .from("question-assets")
-    .createSignedUrl(asset.storage_path, 60);
+    .createSignedUrl(asset.storage_path, 3_900);
   if (signedError) {
     return NextResponse.json({ error: signedError.message }, { status: 500 });
   }
-  return NextResponse.redirect(signed.signedUrl, {
+
+  const imageResponse = await fetch(signed.signedUrl);
+  if (!imageResponse.ok || !imageResponse.body) {
+    return NextResponse.json(
+      { error: "Question image could not be loaded." },
+      { status: 502 },
+    );
+  }
+
+  return new Response(imageResponse.body, {
+    status: 200,
     headers: {
-      "Cache-Control": "private, no-store",
+      "Cache-Control": "private, max-age=3600",
+      "Content-Type":
+        imageResponse.headers.get("content-type") ?? "image/png",
     },
   });
 }

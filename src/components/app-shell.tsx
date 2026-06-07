@@ -11,6 +11,7 @@ import {
   GraduationCap,
   House,
   LayoutDashboard,
+  LoaderCircle,
   LogOut,
   Menu,
   PanelLeftClose,
@@ -51,7 +52,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { state, loadError, refresh } = useAppState();
+  const { state, hydrated, loadError, refresh } = useAppState();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const links = role === "tutor" ? tutorLinks : studentLinks;
@@ -264,7 +265,22 @@ export function AppShell({
           </div>
         )}
         <main className="mx-auto max-w-[1500px] p-4 sm:p-6 lg:p-8">
-          {children}
+          {hydrated ? (
+            children
+          ) : (
+            <div
+              className="grid min-h-[60vh] place-items-center"
+              role="status"
+              aria-label="Loading workspace"
+            >
+              <div className="text-center">
+                <LoaderCircle className="mx-auto h-9 w-9 animate-spin text-[var(--blue)]" />
+                <p className="mt-4 text-sm font-bold text-slate-600">
+                  Loading your workspace...
+                </p>
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>

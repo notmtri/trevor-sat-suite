@@ -381,6 +381,7 @@ export async function GET() {
       remainingSeconds: parsedDeadline
         ? Math.max(0, Math.ceil((parsedDeadline - Date.now()) / 1000))
         : undefined,
+      serverDeadline: deadline || undefined,
       connectionStatus: text(
         attempt.connection_status,
         "offline",

@@ -27,6 +27,11 @@ export default function StudentDashboard() {
   const studentAttempts = state.attempts.filter(
     (attempt) => attempt.studentId === student?.id,
   );
+  const activeAttempt = studentAttempts.find(
+    (attempt) =>
+      attempt.assignmentId === assignment?.id &&
+      attempt.status === "in_progress",
+  );
   const scoredAttempts = studentAttempts.filter(
     (attempt) =>
       attempt.released &&
@@ -115,23 +120,27 @@ export default function StudentDashboard() {
                         month: "short",
                         day: "numeric",
                       }).format(new Date(assignment.dueAt))
-                    : "—"}
+                    : "No date"}
                 </p>
                 <p className="text-xs text-slate-500">Due date</p>
               </div>
             </div>
-            <Link
-              href={
-                assignment
-                  ? `/student/test/${isDemoAssignment() ? "demo" : assignment.id}`
-                  : "/student"
-              }
-              aria-disabled={!assignment}
-              className="focus-ring mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--navy)] font-bold text-white hover:bg-[var(--navy-dark)]"
-            >
-              {assignment ? "Start assignment" : "Nothing due"}{" "}
-              <ArrowRight className="h-5 w-5" />
-            </Link>
+            {assignment ? (
+              <Link
+                href={`/student/test/${isDemoAssignment() ? "demo" : assignment.id}`}
+                className="focus-ring mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--navy)] font-bold text-white hover:bg-[var(--navy-dark)]"
+              >
+                {activeAttempt ? "Resume assignment" : "Start assignment"}
+                <ArrowRight className="h-5 w-5" />
+              </Link>
+            ) : (
+              <div
+                aria-disabled="true"
+                className="mt-6 inline-flex h-12 w-full cursor-not-allowed items-center justify-center rounded-xl bg-slate-200 font-bold text-slate-500"
+              >
+                Nothing due
+              </div>
+            )}
             <p className="mt-3 text-center text-xs font-semibold text-slate-400">
               Progress saves automatically. Your tutor sees status, not answers.
             </p>

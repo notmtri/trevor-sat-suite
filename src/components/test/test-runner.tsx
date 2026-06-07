@@ -15,6 +15,8 @@ import {
   Flag,
   Highlighter,
   List,
+  LoaderCircle,
+  LogOut,
   Menu,
   MessageSquareText,
   Minus,
@@ -43,6 +45,7 @@ import type {
   ResponseRecord,
   TestModule,
 } from "@/lib/domain";
+import { preloadQuestionAssets } from "@/lib/question-assets";
 import { isResponseCorrect, scoreResponses } from "@/lib/scoring";
 import {
   isDemoMode,
@@ -68,6 +71,25 @@ type RecoveryState = {
   highlights: Record<string, Array<{ x: number; y: number }>>;
 };
 
+type AssetLoadState = {
+  status: "idle" | "loading" | "ready" | "error";
+  loaded: number;
+  total: number;
+  error: string;
+};
+
+function questionsForModule(
+  module: TestModule | undefined,
+  questions: Question[],
+) {
+  return [...(module?.questions ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map((item) =>
+      questions.find((question) => question.id === item.questionId),
+    )
+    .filter((question): question is Question => Boolean(question));
+}
+
 function responseRecords(
   questions: Question[],
   values: Record<string, string>,
@@ -85,12 +107,13 @@ function responseRecords(
 }
 
 export function TestRunner({ attemptId }: { attemptId: string }) {
-  const { state, upsertAttempt, refresh } = useAppState();
+  const { state, hydrated, loadError, upsertAttempt, refresh } = useAppState();
   const production = isSupabaseConfigured() && !isDemoMode();
   const assignment =
-    state.assignments.find((item) =>
-      attemptId === "demo" ? item.status === "open" : item.id === attemptId,
-    ) ?? state.assignments[0];
+    attemptId === "demo"
+      ? state.assignments.find((item) => item.status === "open") ??
+        state.assignments[0]
+      : state.assignments.find((item) => item.id === attemptId);
   const test = state.tests.find((item) => item.id === assignment?.testId);
   const existingAttempt = state.attempts.find(
     (item) =>
@@ -125,6 +148,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
   const [online, setOnline] = useState(true);
   const [phoneBlocked, setPhoneBlocked] = useState(false);
   const [checkedQuestionId, setCheckedQuestionId] = useState<string | null>(
@@ -136,8 +160,19 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     existingAttempt?.id ?? "",
   );
   const [syncError, setSyncError] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [preloadRetry, setPreloadRetry] = useState(0);
+  const [assetLoad, setAssetLoad] = useState<AssetLoadState>({
+    status: "idle",
+    loaded: 0,
+    total: 0,
+    error: "",
+  });
   const questionAreaRef = useRef<HTMLDivElement>(null);
+  const testContentRef = useRef<HTMLElement>(null);
   const submittingRef = useRef(false);
+  const restoredRef = useRef(false);
 
   const modules = useMemo(
     () =>
@@ -148,21 +183,66 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   );
   const activeModule: TestModule | undefined = modules[moduleIndex];
   const activeQuestions = useMemo(
-    () =>
-      (activeModule?.questions ?? [])
-        .sort((a, b) => a.order - b.order)
-        .map((item) =>
-          state.questions.find((question) => question.id === item.questionId),
-        )
-        .filter((question): question is Question => Boolean(question)),
+    () => questionsForModule(activeModule, state.questions),
     [activeModule, state.questions],
   );
+  const allQuestions = useMemo(
+    () =>
+      modules.flatMap((module) =>
+        questionsForModule(module, state.questions),
+      ),
+    [modules, state.questions],
+  );
+  const preloadModule =
+    stage === "module_complete" ? modules[moduleIndex + 1] : activeModule;
+  const preloadAssets = useMemo(
+    () =>
+      questionsForModule(preloadModule, state.questions).flatMap(
+        (question) => question.promptAssets,
+      ),
+    [preloadModule, state.questions],
+  );
+  const preloadSignature = `${preloadModule?.id ?? "none"}:${preloadAssets
+    .map((asset) => `${asset.id}:${asset.storagePath ?? asset.dataUrl ?? ""}`)
+    .join("|")}`;
   const activeQuestion = activeQuestions[questionIndex];
   const feedbackImmediate = assignment?.feedbackPolicy === "immediate";
   const isMath = activeModule?.section === "Math";
   const answeredCount = activeQuestions.filter(
     (question) => responseValues[question.id]?.trim(),
   ).length;
+  const totalAnsweredCount = allQuestions.filter(
+    (question) => responseValues[question.id]?.trim(),
+  ).length;
+  const syncSnapshotRef = useRef({
+    activeQuestions,
+    responseValues,
+    flagged,
+    eliminated,
+    questionIndex,
+    answeredCount,
+    online,
+  });
+
+  useEffect(() => {
+    syncSnapshotRef.current = {
+      activeQuestions,
+      responseValues,
+      flagged,
+      eliminated,
+      questionIndex,
+      answeredCount,
+      online,
+    };
+  }, [
+    activeQuestions,
+    answeredCount,
+    eliminated,
+    flagged,
+    online,
+    questionIndex,
+    responseValues,
+  ]);
 
   useEffect(() => {
     const update = () => {
@@ -188,27 +268,173 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   }, [stage]);
 
   useEffect(() => {
+    if (!hydrated || restoredRef.current) return;
     const timer = window.setTimeout(() => {
+      if (restoredRef.current) return;
+      restoredRef.current = true;
+
       try {
         const saved = localStorage.getItem(recoveryKey);
-        if (!saved) return;
-        const recovery = JSON.parse(saved) as RecoveryState;
-        if (recovery.deadline <= Date.now()) return;
-        setDeadline(recovery.deadline);
-        setRemainingSeconds(Math.ceil((recovery.deadline - Date.now()) / 1000));
-        setModuleIndex(recovery.moduleIndex);
-        setQuestionIndex(recovery.questionIndex);
-        setResponseValues(recovery.responseValues);
-        setFlagged(new Set(recovery.flaggedIds));
-        setEliminated(recovery.eliminated);
-        setNotes(recovery.notes);
-        setHighlights(recovery.highlights);
+        if (saved) {
+          const recovery = JSON.parse(saved) as RecoveryState;
+          if (
+            recovery.deadline > Date.now() &&
+            modules[recovery.moduleIndex]
+          ) {
+            setDeadline(recovery.deadline);
+            setRemainingSeconds(
+              Math.ceil((recovery.deadline - Date.now()) / 1000),
+            );
+            setModuleIndex(recovery.moduleIndex);
+            setQuestionIndex(recovery.questionIndex);
+            setResponseValues(recovery.responseValues);
+            setFlagged(new Set(recovery.flaggedIds));
+            setEliminated(recovery.eliminated);
+            setNotes(recovery.notes);
+            setHighlights(recovery.highlights);
+            return;
+          }
+          localStorage.removeItem(recoveryKey);
+        }
       } catch {
         localStorage.removeItem(recoveryKey);
       }
+
+      if (existingAttempt?.status !== "in_progress") return;
+      const restoredModuleIndex = Math.max(
+        0,
+        modules.findIndex(
+          (module) => module.id === existingAttempt.currentModuleId,
+        ),
+      );
+      const restoredDeadline = existingAttempt.serverDeadline
+        ? new Date(existingAttempt.serverDeadline).getTime()
+        : Date.now() + (existingAttempt.remainingSeconds ?? 0) * 1000;
+      if (restoredDeadline <= Date.now()) return;
+
+      setModuleIndex(restoredModuleIndex);
+      setQuestionIndex(existingAttempt.currentQuestionIndex);
+      setDeadline(restoredDeadline);
+      setRemainingSeconds(
+        Math.max(0, Math.ceil((restoredDeadline - Date.now()) / 1000)),
+      );
+      setResponseValues(
+        Object.fromEntries(
+          existingAttempt.responses.map((response) => [
+            response.questionId,
+            response.value,
+          ]),
+        ),
+      );
+      setFlagged(
+        new Set(
+          existingAttempt.responses
+            .filter((response) => response.flagged)
+            .map((response) => response.questionId),
+        ),
+      );
+      setEliminated(
+        Object.fromEntries(
+          existingAttempt.responses.map((response) => [
+            response.questionId,
+            response.eliminatedChoices,
+          ]),
+        ),
+      );
     }, 0);
+
     return () => window.clearTimeout(timer);
-  }, [recoveryKey]);
+  }, [existingAttempt, hydrated, modules, recoveryKey]);
+
+  useEffect(() => {
+    if (
+      stage === "testing" ||
+      stage === "submitted" ||
+      !preloadModule
+    ) {
+      return;
+    }
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setAssetLoad({
+        status: "loading",
+        loaded: 0,
+        total: preloadAssets.length,
+        error: "",
+      });
+      void preloadQuestionAssets(preloadAssets, (loaded, total) => {
+        if (!active) return;
+        setAssetLoad({
+          status: "loading",
+          loaded,
+          total,
+          error: "",
+        });
+      })
+        .then(() => {
+          if (!active) return;
+          setAssetLoad((current) => ({
+            status: "ready",
+            loaded: current.total,
+            total: current.total,
+            error: "",
+          }));
+        })
+        .catch((error) => {
+          if (!active) return;
+          setAssetLoad((current) => ({
+            ...current,
+            status: "error",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Question images could not be prepared.",
+          }));
+        });
+    }, 0);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    preloadAssets,
+    preloadModule,
+    preloadRetry,
+    preloadSignature,
+    stage,
+  ]);
+
+  useEffect(() => {
+    if (
+      stage === "launch" &&
+      deadline > Date.now() &&
+      assetLoad.status === "ready"
+    ) {
+      const timer = window.setTimeout(() => {
+        setRemainingSeconds(Math.ceil((deadline - Date.now()) / 1000));
+        setStage("testing");
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [assetLoad.status, deadline, stage]);
+
+  useEffect(() => {
+    if (stage !== "testing") return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [stage]);
+
+  useEffect(() => {
+    if (stage === "testing") {
+      testContentRef.current?.scrollTo({ top: 0 });
+    }
+  }, [moduleIndex, questionIndex, stage]);
 
   const saveRecovery = useCallback(() => {
     if (!deadline) return;
@@ -245,12 +471,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       if (!assignment || !test || !student) return;
       if (submittingRef.current) return;
       submittingRef.current = true;
-      const allQuestionIds = modules.flatMap((module) =>
-        module.questions.map((item) => item.questionId),
-      );
-      const allQuestions = allQuestionIds
-        .map((id) => state.questions.find((question) => question.id === id))
-        .filter((question): question is Question => Boolean(question));
+      setSubmitting(true);
       const responses = responseRecords(
         allQuestions,
         responseValues,
@@ -306,12 +527,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             .length,
           connectionStatus: online ? "online" : "offline",
           responses,
-          startedAt: new Date(
-            deadline -
-              (activeModule?.durationMinutes ?? 20) *
-                60_000 *
-                (student.timeMultiplier ?? 1),
-          ).toISOString(),
+          startedAt:
+            existingAttempt?.startedAt ??
+            new Date(
+              deadline -
+                (activeModule?.durationMinutes ?? 20) *
+                  60_000 *
+                  (student.timeMultiplier ?? 1),
+            ).toISOString(),
           submittedAt: serverResult?.submittedAt ?? new Date().toISOString(),
           lastHeartbeatAt: new Date().toISOString(),
           rawCorrect: serverResult
@@ -335,15 +558,17 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         );
       } finally {
         submittingRef.current = false;
+        setSubmitting(false);
       }
     },
     [
       activeModule,
+      allQuestions,
       assignment,
       deadline,
       eliminated,
+      existingAttempt,
       flagged,
-      modules,
       online,
       questionIndex,
       recoveryKey,
@@ -351,7 +576,6 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       production,
       refresh,
       serverAttemptId,
-      state.questions,
       student,
       test,
       attemptId,
@@ -374,11 +598,16 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   useEffect(() => {
     if (stage !== "testing" || !assignment || !student || !activeModule) return;
     const heartbeat = () => {
+      const snapshot = syncSnapshotRef.current;
       const responses = responseRecords(
-        activeQuestions,
-        responseValues,
-        flagged,
-        eliminated,
+        snapshot.activeQuestions,
+        snapshot.responseValues,
+        snapshot.flagged,
+        snapshot.eliminated,
+      );
+      const currentRemainingSeconds = Math.max(
+        0,
+        Math.ceil((deadline - Date.now()) / 1000),
       );
       const localAttempt: Attempt = {
         id:
@@ -389,10 +618,11 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         studentId: student.id,
         status: "in_progress",
         currentModuleId: activeModule.id,
-        currentQuestionIndex: questionIndex,
-        answeredCount,
-        remainingSeconds,
-        connectionStatus: online ? "online" : "offline",
+        currentQuestionIndex: snapshot.questionIndex,
+        answeredCount: snapshot.answeredCount,
+        remainingSeconds: currentRemainingSeconds,
+        serverDeadline: new Date(deadline).toISOString(),
+        connectionStatus: snapshot.online ? "online" : "offline",
         responses,
         startedAt: new Date(
           deadline -
@@ -404,16 +634,16 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         released: false,
       };
       upsertAttempt(localAttempt);
-      if (production && serverAttemptId && online) {
+      if (production && serverAttemptId && snapshot.online) {
         void fetch("/api/attempts/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             attemptId: serverAttemptId,
             moduleId: activeModule.id,
-            currentQuestionIndex: questionIndex,
-            answeredCount,
-            online,
+            currentQuestionIndex: snapshot.questionIndex,
+            answeredCount: snapshot.answeredCount,
+            online: snapshot.online,
             responses,
           }),
         }).then(async (response) => {
@@ -433,16 +663,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     return () => window.clearInterval(interval);
   }, [
     activeModule,
-    activeQuestions,
-    answeredCount,
     assignment,
     deadline,
-    eliminated,
-    flagged,
-    online,
-    questionIndex,
-    remainingSeconds,
-    responseValues,
     production,
     serverAttemptId,
     stage,
@@ -470,6 +692,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         activeQuestion?.responseType === "multiple_choice" &&
         /^[a-d]$/i.test(event.key)
       ) {
+        setCheckedQuestionId(null);
+        setCheckedCorrect(null);
         setResponseValues((values) => ({
           ...values,
           [activeQuestion.id]: event.key.toUpperCase(),
@@ -481,7 +705,17 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   }, [activeQuestion, activeQuestions.length, questionIndex, stage]);
 
   async function startModule() {
-    if (!activeModule || !student) return;
+    if (
+      !activeModule ||
+      !assignment ||
+      !student ||
+      !activeQuestions.length ||
+      assetLoad.status !== "ready" ||
+      starting
+    ) {
+      return;
+    }
+    setStarting(true);
     try {
       let nextDeadline =
         deadline > Date.now()
@@ -495,7 +729,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            assignmentId: assignment?.id,
+            assignmentId: assignment.id,
             moduleId: activeModule.id,
             attemptId: serverAttemptId || undefined,
           }),
@@ -519,6 +753,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       setSyncError(
         error instanceof Error ? error.message : "The module could not be started.",
       );
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -603,13 +839,33 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     }));
   }
 
-  if (!assignment || !test || !activeModule || !student) {
+  if (!hydrated) {
+    return (
+      <div className="fixed inset-0 z-[100] grid place-items-center bg-[var(--wash)]">
+        <div className="text-center">
+          <LoaderCircle className="mx-auto h-9 w-9 animate-spin text-[var(--blue)]" />
+          <p className="mt-4 text-sm font-bold text-slate-600">
+            Loading your assignment...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    !assignment ||
+    !test ||
+    !activeModule ||
+    !student ||
+    !activeQuestions.length
+  ) {
     return (
       <Card className="mx-auto max-w-xl p-8 text-center">
         <AlertTriangle className="mx-auto h-9 w-9 text-amber-500" />
         <h1 className="mt-4 text-xl font-black">Assignment unavailable</h1>
         <p className="mt-2 text-sm text-slate-500">
-          This assignment has no published module or its questions are missing.
+          {loadError ||
+            "This assignment has no published module or its questions are missing."}
         </p>
         <Link
           href="/student"
@@ -718,6 +974,76 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 </div>
               </>
             )}
+            {preloadModule && (
+              <div
+                className={cn(
+                  "mt-5 rounded-xl border p-4",
+                  assetLoad.status === "error"
+                    ? "border-rose-200 bg-rose-50"
+                    : assetLoad.status === "ready"
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "bg-slate-50",
+                )}
+                aria-live="polite"
+              >
+                <div className="flex items-start gap-3">
+                  {assetLoad.status === "ready" ? (
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                  ) : assetLoad.status === "error" ? (
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700" />
+                  ) : (
+                    <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-[var(--blue)]" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black">
+                      {assetLoad.status === "ready"
+                        ? `${preloadModule.title} is ready`
+                        : assetLoad.status === "error"
+                          ? "Some question images did not load"
+                          : `Preparing ${preloadModule.title}`}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                      {assetLoad.status === "ready"
+                        ? assetLoad.total
+                          ? `All ${assetLoad.total} question image${assetLoad.total === 1 ? "" : "s"} loaded and decoded. The timer has not started.`
+                          : "No question images are required. The timer has not started."
+                        : assetLoad.status === "error"
+                          ? assetLoad.error
+                          : assetLoad.total
+                            ? `${assetLoad.loaded} of ${assetLoad.total} images prepared.`
+                            : "Checking the questions before the timer starts..."}
+                    </p>
+                    {remainingSeconds > 0 &&
+                      assetLoad.status !== "ready" && (
+                        <p className="mt-2 text-xs font-bold text-amber-800">
+                          This is an active attempt, so its deadline continues
+                          while images are restored.
+                        </p>
+                      )}
+                    {assetLoad.status === "error" && (
+                      <Button
+                        className="mt-3"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setPreloadRetry((value) => value + 1)}
+                      >
+                        Retry image loading
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {assetLoad.status === "loading" && assetLoad.total > 0 && (
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                    <div
+                      className="h-full rounded-full bg-[var(--blue)] transition-all"
+                      style={{
+                        width: `${(assetLoad.loaded / assetLoad.total) * 100}%`,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
             <div className="mt-7 flex flex-wrap justify-between gap-3">
               <Link
                 href="/student"
@@ -727,6 +1053,12 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               </Link>
               <Button
                 size="lg"
+                loading={starting}
+                disabled={
+                  !moduleDone &&
+                  !isBreak &&
+                  assetLoad.status !== "ready"
+                }
                 onClick={
                   moduleDone
                     ? beginNextModule
@@ -739,7 +1071,9 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   ? "Continue"
                   : isBreak
                     ? "Continue to Math"
-                    : deadline > 0
+                    : assetLoad.status === "loading"
+                      ? `Preparing ${assetLoad.loaded}/${assetLoad.total}`
+                      : deadline > 0
                       ? "Resume module"
                       : "Start module"}
                 <ArrowRight className="h-5 w-5" />
@@ -804,7 +1138,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                     </div>
                   </div>
                   <div className="mt-7 space-y-5">
-                    {activeQuestions.map((question, index) => {
+                    {allQuestions.map((question, index) => {
                       const value = responseValues[question.id] ?? "";
                       const correct = isResponseCorrect(question, value);
                       return (
@@ -888,13 +1222,13 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
           {timerHidden ? "Timer hidden" : formatDuration(remainingSeconds)}
         </button>
         <div className="flex items-center gap-2">
-          <Badge tone={online ? "green" : "rose"}>
+          <Badge tone={online && !syncError ? "green" : "rose"}>
             {online ? (
               <Wifi className="mr-1 h-3 w-3" />
             ) : (
               <WifiOff className="mr-1 h-3 w-3" />
             )}
-            {online ? "Saved" : "Offline"}
+            {!online ? "Offline" : syncError ? "Save issue" : "Online"}
           </Badge>
           <button
             type="button"
@@ -920,7 +1254,10 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <section className="scrollbar-thin min-w-0 flex-1 overflow-y-auto bg-[#f5f6f8]">
+        <section
+          ref={testContentRef}
+          className="scrollbar-thin min-w-0 flex-1 overflow-y-auto bg-[#f5f6f8]"
+        >
           <div className="mx-auto max-w-5xl p-4 sm:p-7">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -1043,12 +1380,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                               : "hover:bg-slate-50",
                             struck && "text-slate-400 line-through",
                           )}
-                          onClick={() =>
+                          onClick={() => {
+                            setCheckedQuestionId(null);
+                            setCheckedCorrect(null);
                             setResponseValues((current) => ({
                               ...current,
                               [activeQuestion.id]: choice,
-                            }))
-                          }
+                            }));
+                          }}
                         >
                           <span
                             className={cn(
@@ -1070,6 +1409,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                               : "text-slate-400 hover:bg-slate-50",
                           )}
                           title={`Eliminate choice ${choice}`}
+                          aria-label={`Eliminate choice ${choice}`}
                           onClick={() => toggleEliminated(choice)}
                         >
                           <X className="h-4 w-4" />
@@ -1081,12 +1421,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               ) : (
                 <input
                   value={selected}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    setCheckedQuestionId(null);
+                    setCheckedCorrect(null);
                     setResponseValues((current) => ({
                       ...current,
                       [activeQuestion.id]: event.target.value,
-                    }))
-                  }
+                    }));
+                  }}
                   className="focus-ring mt-4 h-12 w-full max-w-sm rounded-xl border px-4 text-lg font-bold"
                   inputMode="decimal"
                   aria-label="Student-produced response"
@@ -1123,37 +1465,46 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         </section>
 
         {notesOpen && (
-          <aside className="hidden w-80 shrink-0 border-l bg-white p-5 lg:block">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-black">Question notes</p>
-                <p className="text-xs text-slate-500">
-                  Private and saved automatically
-                </p>
-              </div>
-              <button
-                type="button"
-                className="grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
-                onClick={() => setNotesOpen(false)}
-              >
-                <PanelRightClose className="h-5 w-5" />
-              </button>
-            </div>
-            <Textarea
-              className="mt-5 min-h-56"
-              value={notes[activeQuestion.id] ?? ""}
-              onChange={(event) =>
-                setNotes((current) => ({
-                  ...current,
-                  [activeQuestion.id]: event.target.value,
-                }))
-              }
-              placeholder="Write a note about your reasoning..."
+          <>
+            <button
+              type="button"
+              aria-label="Close question notes"
+              className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden"
+              onClick={() => setNotesOpen(false)}
             />
-            <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-400">
-              <Save className="h-3.5 w-3.5" /> Saved in recovery state
-            </p>
-          </aside>
+            <aside className="fixed inset-x-4 bottom-20 top-20 z-40 overflow-y-auto rounded-2xl border bg-white p-5 shadow-2xl lg:static lg:w-80 lg:shrink-0 lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-none">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-black">Question notes</p>
+                  <p className="text-xs text-slate-500">
+                    Private and saved automatically
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
+                  onClick={() => setNotesOpen(false)}
+                  aria-label="Close question notes"
+                >
+                  <PanelRightClose className="h-5 w-5" />
+                </button>
+              </div>
+              <Textarea
+                className="mt-5 min-h-56"
+                value={notes[activeQuestion.id] ?? ""}
+                onChange={(event) =>
+                  setNotes((current) => ({
+                    ...current,
+                    [activeQuestion.id]: event.target.value,
+                  }))
+                }
+                placeholder="Write a note about your reasoning..."
+              />
+              <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-400">
+                <Save className="h-3.5 w-3.5" /> Saved in recovery state
+              </p>
+            </aside>
+          </>
         )}
       </div>
 
@@ -1169,6 +1520,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             )}
             onClick={() => setHighlightMode((value) => !value)}
             title="Highlight image region"
+            aria-label="Highlight image region"
           >
             <Highlighter className="h-5 w-5" />
           </button>
@@ -1182,6 +1534,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             )}
             onClick={() => setLineReader((value) => !value)}
             title="Line reader"
+            aria-label="Line reader"
           >
             <ScanLine className="h-5 w-5" />
           </button>
@@ -1195,6 +1548,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             )}
             onClick={() => setNotesOpen((value) => !value)}
             title="Notes"
+            aria-label="Notes"
           >
             <MessageSquareText className="h-5 w-5" />
           </button>
@@ -1203,6 +1557,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             className="focus-ring grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100"
             onClick={() => setZoom((value) => Math.min(2, value + 0.1))}
             title="Zoom"
+            aria-label="Zoom in"
           >
             <ZoomIn className="h-5 w-5" />
           </button>
@@ -1213,6 +1568,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 className="focus-ring grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100"
                 onClick={() => setReferenceOpen(true)}
                 title="Reference sheet"
+                aria-label="Reference sheet"
               >
                 <ScrollText className="h-5 w-5" />
               </button>
@@ -1221,6 +1577,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 className="focus-ring grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100"
                 onClick={() => setCalculatorOpen(true)}
                 title="Desmos calculator"
+                aria-label="Desmos calculator"
               >
                 <Calculator className="h-5 w-5" />
               </button>
@@ -1308,9 +1665,21 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               <span className="font-semibold text-slate-500">
                 {answeredCount} of {activeQuestions.length} answered
               </span>
-              <Dialog.Close asChild>
-                <Button>Return to test</Button>
-              </Dialog.Close>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  icon={<LogOut className="h-4 w-4" />}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setExitOpen(true);
+                  }}
+                >
+                  Exit test
+                </Button>
+                <Dialog.Close asChild>
+                  <Button>Return to test</Button>
+                </Dialog.Close>
+              </div>
             </div>
           </Dialog.Content>
         </Dialog.Portal>
@@ -1324,15 +1693,16 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               Submit your assignment?
             </Dialog.Title>
             <Dialog.Description className="mt-2 text-sm leading-6 text-slate-600">
-              You answered {answeredCount} of {activeQuestions.length} questions
-              in this module. Once submitted, you cannot change these answers.
+              You answered {totalAnsweredCount} of {allQuestions.length} questions
+              in this assignment. Once submitted, you cannot change these
+              answers.
             </Dialog.Description>
-            {answeredCount < activeQuestions.length && (
+            {totalAnsweredCount < allQuestions.length && (
               <div className="mt-4 flex gap-3 rounded-xl bg-amber-50 p-4 text-sm font-semibold text-amber-900">
                 <AlertTriangle className="h-5 w-5 shrink-0" />
-                {activeQuestions.length - answeredCount} question
-                {activeQuestions.length - answeredCount === 1 ? "" : "s"} remain
-                unanswered.
+                {allQuestions.length - totalAnsweredCount} question
+                {allQuestions.length - totalAnsweredCount === 1 ? "" : "s"}{" "}
+                remain unanswered.
               </div>
             )}
             <div className="mt-6 flex justify-end gap-2">
@@ -1341,10 +1711,38 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               </Dialog.Close>
               <Button
                 icon={<Check className="h-4 w-4" />}
+                loading={submitting}
                 onClick={() => void submitAttempt(false)}
               >
                 Submit
               </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
+      <Dialog.Root open={exitOpen} onOpenChange={setExitOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[150] bg-slate-950/45" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[151] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
+            <Dialog.Title className="text-xl font-black">
+              Exit this timed module?
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm leading-6 text-slate-600">
+              Your answers are saved, but the timer will continue while you are
+              on the dashboard. Return before the deadline to keep working.
+            </Dialog.Description>
+            <div className="mt-6 flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary">Keep working</Button>
+              </Dialog.Close>
+              <Link
+                href="/student"
+                className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-rose-50 px-4 text-sm font-semibold text-rose-700 hover:bg-rose-100"
+              >
+                <LogOut className="h-4 w-4" />
+                Exit to dashboard
+              </Link>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

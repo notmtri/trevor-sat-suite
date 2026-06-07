@@ -37,7 +37,7 @@ test("authenticated navigation reaches the landing page and account settings", a
     .click();
   await expect(
     page.getByRole("heading", {
-      name: "Serious SAT practice, with every detail intact.",
+      name: "Serious SAT practice, with realistic testing experience.",
     }),
   ).toBeVisible();
 
@@ -80,13 +80,71 @@ test("student can launch the demo testing module", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /Welcome back, Minh Nguyen\./ }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(localStorage.getItem("trevors-sat-suite-state-v1")),
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() => {
+    const key = "trevors-sat-suite-state-v1";
+    const saved = localStorage.getItem(key);
+    if (!saved) return;
+    const state = JSON.parse(saved) as {
+      attempts: Array<{ status: string }>;
+    };
+    state.attempts = state.attempts.filter(
+      (attempt) => attempt.status !== "in_progress",
+    );
+    localStorage.setItem(key, JSON.stringify(state));
+  });
+  await page.reload();
   await page.getByRole("link", { name: /Start assignment/ }).click();
-  await expect(page.getByText("Math Practice")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Math Practice", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "All 3 question images loaded and decoded. The timer has not started.",
+    ),
+  ).toBeVisible();
   await page.getByRole("button", { name: /Start module/ }).click();
   await expect(page.getByText("Your answer"), pageErrors.join("\n")).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Student-produced response" }),
   ).toBeVisible();
+  const questionImage = page.getByAltText("Question 1");
+  await expect(questionImage).toBeVisible();
+  expect(
+    await questionImage.evaluate(
+      (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+    ),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "Notes" }).click();
+  await expect(page.getByText("Question notes")).toBeVisible();
+  await page.getByRole("button", { name: "Close question notes" }).last().click();
+
+  await page.getByRole("button", { name: "Open question menu" }).click();
+  await page.getByRole("button", { name: "Exit test" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Exit this timed module?" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Keep working" }).click();
+  await expect(page.getByText("Your answer")).toBeVisible();
+
+  await page.getByRole("button", { name: "Open question menu" }).click();
+  await page.getByRole("button", { name: "Exit test" }).click();
+  await page.getByRole("link", { name: "Exit to dashboard" }).click();
+  await expect(
+    page.getByRole("heading", { name: /Welcome back, Minh Nguyen\./ }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Resume assignment" }).click();
+  await expect(page.getByText("Your answer")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start module" }),
+  ).toHaveCount(0);
 });
 
 test("canonical PDF imports seven exact-image questions", async ({ page }) => {

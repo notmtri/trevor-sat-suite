@@ -108,6 +108,16 @@ export async function POST(request: Request) {
         serverNow: now.toISOString(),
       });
     }
+    if (
+      attempt.current_module_id === testModule.id &&
+      existingDeadline > now &&
+      !assignment.allow_resume
+    ) {
+      return NextResponse.json(
+        { error: "This assignment does not allow a timed module to be resumed." },
+        { status: 409 },
+      );
+    }
     if (attempt.current_module_id === testModule.id && existingDeadline <= now) {
       await admin
         .from("attempts")

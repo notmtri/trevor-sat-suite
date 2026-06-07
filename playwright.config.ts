@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -7,18 +9,20 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: externalBaseURL ?? "http://127.0.0.1:3100",
     trace: "on-first-retry",
   },
-  webServer: {
-    command: "npm run dev -- -p 3100",
-    url: "http://127.0.0.1:3100",
-    env: {
-      NEXT_PUBLIC_DEMO_MODE: "true",
-    },
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  webServer: externalBaseURL
+    ? undefined
+    : {
+        command: "npm run dev -- -p 3100",
+        url: "http://127.0.0.1:3100",
+        env: {
+          NEXT_PUBLIC_DEMO_MODE: "true",
+        },
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+      },
   projects: [
     {
       name: "chromium",

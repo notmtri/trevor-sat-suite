@@ -118,6 +118,7 @@ export type Attempt = {
   connectionStatus: "online" | "offline" | "stale";
   responses: ResponseRecord[];
   route?: "easier" | "harder";
+  serverDeadline?: string;
   startedAt?: string;
   submittedAt?: string;
   lastHeartbeatAt?: string;
