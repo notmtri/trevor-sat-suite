@@ -62,6 +62,7 @@ export async function persistQuestionImport(
           skill: question.skill,
           difficulty: question.difficulty,
           status: question.status,
+          tags: question.tags ?? [],
         },
         { onConflict: "owner_id,source_id" },
       )
@@ -137,7 +138,11 @@ export async function persistQuestionImport(
 
     const { error: currentVersionError } = await supabase
       .from("questions")
-      .update({ current_version_id: versionId, status: question.status })
+      .update({
+        current_version_id: versionId,
+        status: question.status,
+        tags: question.tags ?? [],
+      })
       .eq("id", questionRow.id);
     if (currentVersionError) throw currentVersionError;
   }
@@ -187,6 +192,7 @@ export async function persistManualQuestion(question: Question) {
       skill: question.skill,
       difficulty: question.difficulty,
       status: question.status,
+      tags: question.tags ?? [],
     })
     .select("id")
     .single();
@@ -265,6 +271,7 @@ export async function persistManualQuestion(question: Question) {
     .update({
       current_version_id: versionId,
       status: question.status,
+      tags: question.tags ?? [],
     })
     .eq("id", questionRow.id)
     .eq("owner_id", user.id);

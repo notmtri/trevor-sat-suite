@@ -4,12 +4,16 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const updateQuestionSchema = z.object({
-  id: z.string().uuid(),
-  status: z.enum(["draft", "published", "rejected"]).optional(),
+  id: z.string().uuid().optional(),
+  ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+  status: z.enum(["draft", "published", "rejected", "archived"]).optional(),
   section: z.enum(["Math", "Reading and Writing"]).optional(),
   domain: z.string().min(1).max(160).optional(),
   skill: z.string().min(1).max(160).optional(),
   difficulty: z.enum(["Easy", "Medium", "Hard"]).optional(),
+  tags: z.array(z.string().min(1).max(40)).max(20).optional(),
+}).refine((value) => Boolean(value.id) !== Boolean(value.ids), {
+  message: "Provide either id or ids.",
 });
 
 const deleteQuestionSchema = z.object({
@@ -39,25 +43,39 @@ export async function PATCH(request: Request) {
       { status: 400 },
     );
   }
-  const { id, ...changes } = parsed.data;
+  const { id, ids, ...changes } = parsed.data;
+  if (
+    changes.status === undefined &&
+    changes.section === undefined &&
+    changes.domain === undefined &&
+    changes.skill === undefined &&
+    changes.difficulty === undefined &&
+    changes.tags === undefined
+  ) {
+    return NextResponse.json(
+      { error: "No question changes were provided." },
+      { status: 400 },
+    );
+  }
   const databaseChanges = {
     ...(changes.status ? { status: changes.status } : {}),
     ...(changes.section ? { section: changes.section } : {}),
     ...(changes.domain ? { domain: changes.domain } : {}),
     ...(changes.skill ? { skill: changes.skill } : {}),
     ...(changes.difficulty ? { difficulty: changes.difficulty } : {}),
+    ...(changes.tags ? { tags: changes.tags } : {}),
   };
-  const { data, error } = await supabase
+  let query = supabase
     .from("questions")
     .update(databaseChanges)
-    .eq("id", id)
     .eq("owner_id", user.id)
-    .select("id")
-    .maybeSingle();
+    .select("id");
+  query = id ? query.eq("id", id) : query.in("id", ids ?? []);
+  const { data, error } = await query;
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  if (!data) {
+  if (!data?.length) {
     return NextResponse.json({ error: "Question not found." }, { status: 404 });
   }
   return NextResponse.json({ ok: true });

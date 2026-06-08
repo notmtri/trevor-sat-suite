@@ -9,12 +9,14 @@ import {
   Clock3,
   FileUp,
   Plus,
+  Bell,
   Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useAppState } from "@/components/providers/app-state-provider";
+import { getTutorNotifications } from "@/lib/assignment-utils";
 import { formatDuration, formatRelativeDate } from "@/lib/utils";
 
 export default function TutorDashboard() {
@@ -31,6 +33,7 @@ export default function TutorDashboard() {
   const completedAttempts = state.attempts.filter(
     (attempt) => attempt.status === "submitted",
   );
+  const notifications = getTutorNotifications(state);
   const today = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
@@ -41,7 +44,7 @@ export default function TutorDashboard() {
     <>
       <PageHeader
         eyebrow={today}
-        title="Good afternoon, Trevor."
+        title={`Good afternoon, ${state.settings.displayName}.`}
         description="Your students, assignments, and live sessions are all in one place."
         actions={
           <>
@@ -203,6 +206,36 @@ export default function TutorDashboard() {
           </div>
         </Card>
       </div>
+
+      <Card className="mt-6 overflow-hidden">
+        <div className="border-b px-6 py-5">
+          <h2 className="flex items-center gap-2 font-extrabold">
+            <Bell className="h-5 w-5 text-[var(--blue)]" />
+            Workspace notifications
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            In-app reminders for reviews, releases, and overdue assignments.
+          </p>
+        </div>
+        <div className="divide-y">
+          {notifications.map((item) => (
+            <div
+              key={item.id}
+              className="grid gap-2 px-6 py-4 sm:grid-cols-[160px_1fr] sm:items-center"
+            >
+              <Badge tone={item.tone}>{item.title}</Badge>
+              <p className="text-sm font-semibold text-slate-600">
+                {item.detail}
+              </p>
+            </div>
+          ))}
+          {!notifications.length && (
+            <div className="px-6 py-10 text-center text-sm text-slate-500">
+              Nothing needs your attention right now.
+            </div>
+          )}
+        </div>
+      </Card>
     </>
   );
 }

@@ -15,30 +15,52 @@ import type {
   Assignment,
   Attempt,
   Question,
+  ReleasedReport,
   Student,
   TestDefinition,
+  TutorSettings,
 } from "@/lib/domain";
 import { demoState } from "@/lib/demo-data";
+import { normalizeTutorSettings } from "@/lib/settings";
 import {
   isDemoMode,
   isSupabaseConfigured,
 } from "@/lib/supabase/client";
 import {
   persistAssignment,
+  persistAssignmentChanges,
+  persistAttemptChanges,
   persistQuestionChanges,
   persistQuestionDelete,
   persistStudentChanges,
+  persistTutorSettings,
   persistTest,
 } from "@/lib/supabase/mutations";
 
 const STORAGE_KEY = "trevors-sat-suite-state-v1";
 const emptyState: AppState = {
+  settings: normalizeTutorSettings(undefined),
   questions: [],
   students: [],
   tests: [],
   assignments: [],
   attempts: [],
+  releasedReports: [],
 };
+
+function normalizeAppState(state: Partial<AppState>): AppState {
+  return {
+    ...emptyState,
+    ...state,
+    settings: normalizeTutorSettings(state.settings),
+    questions: state.questions ?? [],
+    students: state.students ?? [],
+    tests: state.tests ?? [],
+    assignments: state.assignments ?? [],
+    attempts: state.attempts ?? [],
+    releasedReports: state.releasedReports ?? [],
+  };
+}
 
 type AppStateContextValue = {
   state: AppState;
@@ -53,7 +75,15 @@ type AppStateContextValue = {
   addTest: (test: TestDefinition) => void;
   updateTest: (id: string, changes: Partial<TestDefinition>) => void;
   addAssignment: (assignment: Assignment) => void;
+  updateAssignment: (id: string, changes: Partial<Assignment>) => void;
   upsertAttempt: (attempt: Attempt) => void;
+  updateAttempt: (
+    id: string,
+    changes: Partial<Attempt>,
+    report?: ReleasedReport,
+  ) => void;
+  upsertReleasedReport: (report: ReleasedReport) => void;
+  updateSettings: (changes: Partial<TutorSettings>) => void;
   resetDemo: () => void;
 };
 
@@ -64,7 +94,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const demo = isDemoMode();
   const shouldLoadRemote =
     pathname.startsWith("/tutor") || pathname.startsWith("/student");
-  const [state, setState] = useState<AppState>(demo ? demoState : emptyState);
+  const [state, setState] = useState<AppState>(
+    demo ? normalizeAppState(demoState) : emptyState,
+  );
   const [hydrated, setHydrated] = useState(false);
   const [loadError, setLoadError] = useState("");
   const persist = useCallback(
@@ -91,7 +123,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!response.ok || !payload.state) {
         throw new Error(payload.error ?? "Application data could not be loaded.");
       }
-      setState(payload.state);
+      setState(normalizeAppState(payload.state));
     } catch (error) {
       setLoadError(
         error instanceof Error ? error.message : "Application data could not be loaded.",
@@ -104,7 +136,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (demo) {
         try {
           const saved = localStorage.getItem(STORAGE_KEY);
-          if (saved) setState(JSON.parse(saved) as AppState);
+          if (saved) setState(normalizeAppState(JSON.parse(saved) as AppState));
         } catch {
           localStorage.removeItem(STORAGE_KEY);
         } finally {
@@ -234,6 +266,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     persist(() => persistAssignment(assignment));
   }, [persist]);
 
+  const updateAssignment = useCallback(
+    (id: string, changes: Partial<Assignment>) => {
+      setState((current) => ({
+        ...current,
+        assignments: current.assignments.map((assignment) =>
+          assignment.id === id ? { ...assignment, ...changes } : assignment,
+        ),
+      }));
+      persist(() => persistAssignmentChanges(id, changes));
+    },
+    [persist],
+  );
+
   const upsertAttempt = useCallback((attempt: Attempt) => {
     setState((current) => {
       const existing = current.attempts.findIndex(
@@ -246,9 +291,62 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const upsertReleasedReport = useCallback((report: ReleasedReport) => {
+    setState((current) => {
+      const existing = current.releasedReports.findIndex(
+        (item) => item.attemptId === report.attemptId,
+      );
+      const releasedReports = [...current.releasedReports];
+      if (existing >= 0) releasedReports[existing] = report;
+      else releasedReports.unshift(report);
+      return { ...current, releasedReports };
+    });
+  }, []);
+
+  const updateAttempt = useCallback(
+    (id: string, changes: Partial<Attempt>, report?: ReleasedReport) => {
+      setState((current) => {
+        const attempts = current.attempts.map((attempt) =>
+          attempt.id === id ? { ...attempt, ...changes } : attempt,
+        );
+        let releasedReports = current.releasedReports;
+        if (report) {
+          const existing = releasedReports.findIndex(
+            (item) => item.attemptId === report.attemptId,
+          );
+          releasedReports = [...releasedReports];
+          if (existing >= 0) releasedReports[existing] = report;
+          else releasedReports.unshift(report);
+        } else if (changes.released === false) {
+          releasedReports = releasedReports.filter(
+            (item) => item.attemptId !== id,
+          );
+        }
+        return { ...current, attempts, releasedReports };
+      });
+      persist(() => persistAttemptChanges(id, changes, report));
+    },
+    [persist],
+  );
+
+  const updateSettings = useCallback(
+    (changes: Partial<TutorSettings>) => {
+      let nextSettings: TutorSettings | undefined;
+      setState((current) => ({
+        ...current,
+        settings: (nextSettings = normalizeTutorSettings({
+          ...current.settings,
+          ...changes,
+        })),
+      }));
+      persist(() => persistTutorSettings(nextSettings ?? changes));
+    },
+    [persist],
+  );
+
   const resetDemo = useCallback(() => {
     if (!demo) return;
-    setState(demoState);
+    setState(normalizeAppState(demoState));
     localStorage.removeItem(STORAGE_KEY);
   }, [demo]);
 
@@ -266,7 +364,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       addTest,
       updateTest,
       addAssignment,
+      updateAssignment,
       upsertAttempt,
+      updateAttempt,
+      upsertReleasedReport,
+      updateSettings,
       resetDemo,
     }),
     [
@@ -282,7 +384,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       addTest,
       updateTest,
       addAssignment,
+      updateAssignment,
       upsertAttempt,
+      updateAttempt,
+      upsertReleasedReport,
+      updateSettings,
       resetDemo,
     ],
   );

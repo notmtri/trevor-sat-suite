@@ -6,6 +6,7 @@ import type {
   Section,
 } from "@/lib/domain";
 import { makeAcceptedAnswers } from "@/lib/scoring";
+import { defaultTutorSettings } from "@/lib/settings";
 
 function svgDataUrl(title: string, lines: string[], accent = "#233876") {
   const escaped = [title, ...lines].map((line) =>
@@ -82,6 +83,7 @@ function demoQuestion(
     sourceFileName: "Demo Question Bank",
     importedAt: "2026-06-06T08:00:00.000Z",
     status: "published",
+    tags: [domain.toLowerCase(), difficulty.toLowerCase()],
   };
 }
 
@@ -150,6 +152,7 @@ const demoQuestions = [
 const now = new Date("2026-06-06T09:00:00.000Z");
 
 export const demoState: AppState = {
+  settings: defaultTutorSettings,
   questions: demoQuestions,
   students: [
     {
@@ -230,6 +233,11 @@ export const demoState: AppState = {
       id: "assignment-algebra",
       testId: "test-algebra-checkpoint",
       studentIds: ["student-minh", "student-linh", "student-alex"],
+      recipients: [
+        { studentId: "student-minh", status: "assigned", attemptLimit: 2 },
+        { studentId: "student-linh", status: "extended", attemptLimit: 2 },
+        { studentId: "student-alex", status: "assigned", attemptLimit: 2 },
+      ],
       title: "Algebra Checkpoint",
       availableAt: "2026-06-05T00:00:00.000Z",
       dueAt: "2026-06-12T16:59:00.000Z",
@@ -269,6 +277,20 @@ export const demoState: AppState = {
       rawCorrect: 2,
       rawTotal: 3,
       released: true,
+    },
+  ],
+  releasedReports: [
+    {
+      id: "report-linh-complete",
+      attemptId: "attempt-linh-complete",
+      releasedBy: "tutor-demo",
+      summary: {
+        tutorComment:
+          "Strong setup work. Review the missed algebra item and keep an eye on signs.",
+        strengths: ["Linear equations", "Pacing"],
+        nextSteps: ["Redo missed questions", "Practice two harder systems"],
+      },
+      releasedAt: "2026-06-05T12:20:00.000Z",
     },
   ],
 };

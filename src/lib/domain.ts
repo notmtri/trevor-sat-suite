@@ -1,7 +1,7 @@
 export type Section = "Math" | "Reading and Writing";
 export type Difficulty = "Easy" | "Medium" | "Hard";
 export type ResponseType = "multiple_choice" | "student_produced";
-export type QuestionStatus = "draft" | "published" | "rejected";
+export type QuestionStatus = "draft" | "published" | "rejected" | "archived";
 export type FeedbackPolicy = "immediate" | "after_submission" | "tutor_release";
 export type TestMode = "practice" | "exam";
 
@@ -40,6 +40,7 @@ export type Question = {
   sourceDocumentPath?: string;
   importedAt: string;
   status: QuestionStatus;
+  tags?: string[];
   reviewNotes?: string;
 };
 
@@ -88,6 +89,7 @@ export type Assignment = {
   id: string;
   testId: string;
   studentIds: string[];
+  recipients?: AssignmentRecipient[];
   title: string;
   availableAt: string;
   dueAt: string;
@@ -95,6 +97,15 @@ export type Assignment = {
   feedbackPolicy: FeedbackPolicy;
   allowResume: boolean;
   status: "scheduled" | "open" | "closed";
+};
+
+export type AssignmentRecipient = {
+  studentId: string;
+  availableAt?: string;
+  dueAt?: string;
+  attemptLimit?: number;
+  status: "assigned" | "extended" | "excused";
+  timeMultiplier?: 1 | 1.5 | 2;
 };
 
 export type ResponseRecord = {
@@ -129,10 +140,38 @@ export type Attempt = {
   released: boolean;
 };
 
+export type TutorSettings = {
+  displayName: string;
+  landingHeadline: string;
+  landingSubheadline: string;
+  heroEyebrow: string;
+  heroTitle: string;
+  heroSubtitle: string;
+  timezone: string;
+  defaultDueDays: number;
+  defaultAttemptLimit: number;
+  defaultFeedbackPolicy: FeedbackPolicy;
+  defaultAllowResume: boolean;
+};
+
+export type ReleasedReport = {
+  id: string;
+  attemptId: string;
+  releasedBy?: string;
+  summary: {
+    tutorComment?: string;
+    strengths?: string[];
+    nextSteps?: string[];
+  };
+  releasedAt: string;
+};
+
 export type AppState = {
+  settings: TutorSettings;
   questions: Question[];
   students: Student[];
   tests: TestDefinition[];
   assignments: Assignment[];
   attempts: Attempt[];
+  releasedReports: ReleasedReport[];
 };

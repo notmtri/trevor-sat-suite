@@ -16,6 +16,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  KeyRound,
   Settings,
   Users,
   X,
@@ -36,6 +37,7 @@ const tutorLinks = [
   { href: "/tutor/tests", label: "Tests & assignments", icon: GraduationCap },
   { href: "/tutor/monitor", label: "Live monitor", icon: Activity },
   { href: "/tutor/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/tutor/settings", label: "Settings", icon: Settings },
 ];
 
 const studentLinks = [
@@ -58,7 +60,9 @@ export function AppShell({
   const links = role === "tutor" ? tutorLinks : studentLinks;
   const student = state.students[0];
   const displayName =
-    role === "tutor" ? "Trevor" : student?.displayName || "Student";
+    role === "tutor"
+      ? state.settings.displayName
+      : student?.displayName || "Student";
   const initials = displayName
     .split(/\s+/)
     .map((part) => part[0])
@@ -151,7 +155,7 @@ export function AppShell({
             collapsed && "justify-center px-0",
           )}
         >
-          <Settings className="h-5 w-5" />
+          <KeyRound className="h-5 w-5" />
           {!collapsed && "Password & account"}
         </Link>
         <button

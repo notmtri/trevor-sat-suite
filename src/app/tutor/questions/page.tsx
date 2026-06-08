@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpenCheck,
+  Archive,
   CheckCircle2,
   Filter,
   ImagePlus,
@@ -18,8 +19,13 @@ import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/field";
+import { FieldLabel, Input, Select } from "@/components/ui/field";
 import type { Question } from "@/lib/domain";
+import {
+  allQuestionTags,
+  filterQuestions,
+  questionUsage,
+} from "@/lib/question-library";
 
 export default function QuestionLibraryPage() {
   const router = useRouter();
@@ -27,33 +33,27 @@ export default function QuestionLibraryPage() {
   const [search, setSearch] = useState("");
   const [section, setSection] = useState("all");
   const [difficulty, setDifficulty] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [tag, setTag] = useState("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selected, setSelected] = useState<Question | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  const tags = useMemo(() => allQuestionTags(state.questions), [state.questions]);
   const filtered = useMemo(
     () =>
-      state.questions.filter((question) => {
-        const haystack =
-          `${question.sourceId} ${question.domain} ${question.skill} ${question.extractedText}`.toLowerCase();
-        return (
-          haystack.includes(search.toLowerCase()) &&
-          (section === "all" || question.section === section) &&
-          (difficulty === "all" || question.difficulty === difficulty)
-        );
+      filterQuestions(state.questions, {
+        search,
+        section,
+        difficulty,
+        status,
+        tag,
       }),
-    [state.questions, search, section, difficulty],
+    [state.questions, search, section, difficulty, status, tag],
   );
-  const selectedTestCount = selected
-    ? state.tests.filter((test) =>
-        test.modules.some((module) =>
-          module.questions.some(
-            (question) => question.questionId === selected.id,
-          ),
-        ),
-      ).length
-    : 0;
+  const selectedUsage = selected ? questionUsage(state, selected.id) : null;
 
   async function removeSelectedQuestion() {
     if (!selected) return;
@@ -72,6 +72,37 @@ export default function QuestionLibraryPage() {
     } finally {
       setDeleting(false);
     }
+  }
+
+  function toggleSelected(questionId: string) {
+    setSelectedIds((current) =>
+      current.includes(questionId)
+        ? current.filter((id) => id !== questionId)
+        : [...current, questionId],
+    );
+  }
+
+  async function deleteSelectedQuestions() {
+    const safeIds = selectedIds.filter(
+      (questionId) => questionUsage(state, questionId).safeToDelete,
+    );
+    for (const questionId of safeIds) {
+      await deleteQuestion(questionId);
+    }
+    setSelectedIds([]);
+  }
+
+  function bulkUpdateStatus(nextStatus: Question["status"]) {
+    for (const questionId of selectedIds) {
+      updateQuestion(questionId, { status: nextStatus });
+    }
+    setSelectedIds([]);
+  }
+
+  function updateSelectedQuestion(changes: Partial<Question>) {
+    if (!selected) return;
+    updateQuestion(selected.id, changes);
+    setSelected({ ...selected, ...changes });
   }
 
   return (
@@ -104,7 +135,7 @@ export default function QuestionLibraryPage() {
       />
 
       <Card className="mb-5 p-4">
-        <div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px_170px]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(240px,1fr)_200px_160px_160px_180px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
             <Input
@@ -131,8 +162,64 @@ export default function QuestionLibraryPage() {
             <option>Medium</option>
             <option>Hard</option>
           </Select>
+          <Select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="all">All statuses</option>
+            <option value="published">Published</option>
+            <option value="draft">Draft</option>
+            <option value="rejected">Rejected</option>
+            <option value="archived">Archived</option>
+          </Select>
+          <Select value={tag} onChange={(event) => setTag(event.target.value)}>
+            <option value="all">All tags</option>
+            {tags.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </Select>
         </div>
       </Card>
+
+      {selectedIds.length > 0 && (
+        <Card className="mb-5 flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm font-bold text-slate-600">
+            {selectedIds.length} selected
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => bulkUpdateStatus("published")}
+            >
+              Publish
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Archive className="h-4 w-4" />}
+              onClick={() => bulkUpdateStatus("archived")}
+            >
+              Archive
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              icon={<Trash2 className="h-4 w-4" />}
+              onClick={() => void deleteSelectedQuestions()}
+            >
+              Delete safe
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedIds([])}
+            >
+              Clear
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="mb-3 flex items-center justify-between">
         <p className="text-sm font-bold text-slate-600">
@@ -147,8 +234,18 @@ export default function QuestionLibraryPage() {
         {filtered.map((question) => (
           <Card
             key={question.id}
-            className="group overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg"
+            className="group relative overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg"
           >
+            <label className="absolute right-3 top-3 z-10 rounded-lg bg-white/95 px-2 py-1 text-xs font-bold shadow-sm">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(question.id)}
+                onChange={() => toggleSelected(question.id)}
+                className="mr-1.5 h-3.5 w-3.5 accent-[var(--navy)]"
+                aria-label={`Select ${question.sourceId}`}
+              />
+              Select
+            </label>
             <button
               type="button"
               className="block w-full text-left"
@@ -184,7 +281,7 @@ export default function QuestionLibraryPage() {
                   <Badge tone="blue">{question.section}</Badge>
                   <Badge>{question.difficulty}</Badge>
                   <Badge>
-                    {question.responseType === "multiple_choice" ? "A–D" : "SPR"}
+                    {question.responseType === "multiple_choice" ? "A-D" : "SPR"}
                   </Badge>
                 </div>
               </div>
@@ -237,52 +334,126 @@ export default function QuestionLibraryPage() {
                   <Dialog.Description className="mt-1 text-sm text-slate-500">
                     {selected.sourceFileName}
                   </Dialog.Description>
-                  <dl className="mt-6 space-y-4 text-sm">
-                    {[
-                      ["Section", selected.section],
-                      ["Domain", selected.domain],
-                      ["Skill", selected.skill],
-                      ["Difficulty", selected.difficulty],
-                      [
-                        "Answer",
-                        selected.acceptedAnswers
+                  <div className="mt-6 space-y-4 text-sm">
+                    <div>
+                      <FieldLabel htmlFor="selected-section">Section</FieldLabel>
+                      <Select
+                        id="selected-section"
+                        value={selected.section}
+                        onChange={(event) =>
+                          updateSelectedQuestion({
+                            section: event.target.value as Question["section"],
+                          })
+                        }
+                      >
+                        <option>Math</option>
+                        <option>Reading and Writing</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="selected-domain">Domain</FieldLabel>
+                      <Input
+                        id="selected-domain"
+                        value={selected.domain}
+                        onChange={(event) =>
+                          updateSelectedQuestion({ domain: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="selected-skill">Skill</FieldLabel>
+                      <Input
+                        id="selected-skill"
+                        value={selected.skill}
+                        onChange={(event) =>
+                          updateSelectedQuestion({ skill: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="selected-difficulty">
+                        Difficulty
+                      </FieldLabel>
+                      <Select
+                        id="selected-difficulty"
+                        value={selected.difficulty}
+                        onChange={(event) =>
+                          updateSelectedQuestion({
+                            difficulty:
+                              event.target.value as Question["difficulty"],
+                          })
+                        }
+                      >
+                        <option>Easy</option>
+                        <option>Medium</option>
+                        <option>Hard</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel htmlFor="selected-tags">
+                        Tags, comma separated
+                      </FieldLabel>
+                      <Input
+                        id="selected-tags"
+                        value={(selected.tags ?? []).join(", ")}
+                        onChange={(event) =>
+                          updateSelectedQuestion({
+                            tags: event.target.value
+                              .split(",")
+                              .map((item) => item.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="algebra, week-1"
+                      />
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                        Answer
+                      </p>
+                      <p className="mt-1 font-semibold">
+                        {selected.acceptedAnswers
                           .map((answer) => answer.value)
-                          .join(", "),
-                      ],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <dt className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                          {label}
-                        </dt>
-                        <dd className="mt-1 font-semibold">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
+                          .join(", ")}
+                      </p>
+                    </div>
+                  </div>
                   <div className="mt-auto space-y-2 pt-8">
                     {selected.status !== "published" && (
                       <Button
                         className="w-full"
                         icon={<CheckCircle2 className="h-4 w-4" />}
                         onClick={() => {
-                          updateQuestion(selected.id, { status: "published" });
-                          setSelected({ ...selected, status: "published" });
+                          updateSelectedQuestion({ status: "published" });
                         }}
                       >
                         Publish question
                       </Button>
                     )}
-                    {selectedTestCount > 0 && (
+                    {selected.status !== "archived" && (
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        icon={<Archive className="h-4 w-4" />}
+                        onClick={() =>
+                          updateSelectedQuestion({ status: "archived" })
+                        }
+                      >
+                        Archive question
+                      </Button>
+                    )}
+                    {(selectedUsage?.testCount ?? 0) > 0 && (
                       <p className="rounded-xl bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-800">
-                        Used in {selectedTestCount} test
-                        {selectedTestCount === 1 ? "" : "s"}. Remove it from
-                        those tests before deleting it.
+                        Used in {selectedUsage?.testCount} test
+                        {selectedUsage?.testCount === 1 ? "" : "s"}. Remove it
+                        from those tests before deleting it.
                       </p>
                     )}
                     <Button
                       variant="danger"
                       className="w-full"
                       icon={<Trash2 className="h-4 w-4" />}
-                      disabled={selectedTestCount > 0}
+                      disabled={!selectedUsage?.safeToDelete}
                       onClick={() => {
                         setDeleteError("");
                         setDeleteOpen(true);

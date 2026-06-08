@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -165,7 +166,12 @@ export default function StudentsPage() {
                           .slice(0, 2)}
                       </div>
                       <div>
-                        <p className="text-sm font-bold">{student.displayName}</p>
+                        <Link
+                          href={`/tutor/students/${student.id}`}
+                          className="text-sm font-bold text-[var(--navy)] hover:underline"
+                        >
+                          {student.displayName}
+                        </Link>
                         <p className="text-xs text-slate-500">@{student.username}</p>
                       </div>
                     </div>

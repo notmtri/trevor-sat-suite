@@ -30,17 +30,20 @@ export async function POST(request: Request) {
     .maybeSingle();
   const { data: recipient } = await admin
     .from("assignment_students")
-    .select("student_id")
+    .select("student_id,available_at,due_at,recipient_status")
     .eq("assignment_id", parsed.data.assignmentId)
     .eq("student_id", user.id)
     .maybeSingle();
+  const effectiveAvailableAt = recipient?.available_at ?? assignment?.available_at;
+  const effectiveDueAt = recipient?.due_at ?? assignment?.due_at;
   if (
     !assignment ||
     !recipient ||
+    recipient.recipient_status === "excused" ||
     assignment.feedback_policy !== "immediate" ||
     assignment.status !== "open" ||
-    new Date() < new Date(assignment.available_at) ||
-    new Date() > new Date(assignment.due_at)
+    new Date() < new Date(effectiveAvailableAt ?? 0) ||
+    new Date() > new Date(effectiveDueAt ?? 0)
   ) {
     return NextResponse.json({ error: "Answer check unavailable." }, { status: 403 });
   }

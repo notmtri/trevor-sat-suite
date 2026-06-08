@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import type {
   AppState,
   Assignment,
+  AssignmentRecipient,
   Attempt,
   Question,
+  ReleasedReport,
   Student,
   TestDefinition,
 } from "@/lib/domain";
+import { normalizeTutorSettings } from "@/lib/settings";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +64,7 @@ export async function GET() {
     testsResult,
     assignmentsResult,
     attemptsResult,
+    settingsResult,
   ] = await Promise.all([
     supabase.from("profiles").select("*"),
     supabase.from("students").select("*"),
@@ -75,6 +80,9 @@ export async function GET() {
       .from("attempts")
       .select("*")
       .order("created_at", { ascending: false }),
+    role === "tutor"
+      ? supabase.from("tutor_settings").select("*").eq("tutor_id", user.id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const failed = [
@@ -84,6 +92,7 @@ export async function GET() {
     testsResult,
     assignmentsResult,
     attemptsResult,
+    settingsResult,
   ].find((result) => result.error);
   if (failed?.error) {
     return NextResponse.json({ error: failed.error.message }, { status: 500 });
@@ -95,6 +104,7 @@ export async function GET() {
   const testRows = rows(testsResult.data);
   const assignmentRows = rows(assignmentsResult.data);
   const attemptRows = rows(attemptsResult.data);
+  const settingsRow = settingsResult.data as Row | null;
 
   if (
     role === "student" &&
@@ -120,6 +130,7 @@ export async function GET() {
     modulesResult,
     assignmentStudentsResult,
     responsesResult,
+    releasedReportsResult,
   ] = await Promise.all([
     versionIds.length
       ? supabase.from("question_versions").select("*").in("id", versionIds)
@@ -140,6 +151,9 @@ export async function GET() {
     attemptIds.length
       ? supabase.from("responses").select("*").in("attempt_id", attemptIds)
       : Promise.resolve({ data: [], error: null }),
+    attemptIds.length
+      ? supabase.from("released_reports").select("*").in("attempt_id", attemptIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   const secondaryFailed = [
@@ -147,6 +161,7 @@ export async function GET() {
     modulesResult,
     assignmentStudentsResult,
     responsesResult,
+    releasedReportsResult,
   ].find((result) => result.error);
   if (secondaryFailed?.error) {
     return NextResponse.json(
@@ -219,7 +234,51 @@ export async function GET() {
     ]),
   );
   const assetRows = rows(assetsResult.data);
-  const answerRows = rows(answersResult.data);
+  const moduleQuestionRows = rows(moduleQuestionsResult.data);
+  let answerRows = rows(answersResult.data);
+  if (role === "student") {
+    const releasedAssignmentIds = new Set(
+      attemptRows
+        .filter(
+          (attempt) =>
+            Boolean(attempt.released) &&
+            ["submitted", "expired"].includes(text(attempt.status)),
+        )
+        .map((attempt) => text(attempt.assignment_id)),
+    );
+    const releasedTestIds = new Set(
+      assignmentRows
+        .filter((assignment) => releasedAssignmentIds.has(text(assignment.id)))
+        .map((assignment) => text(assignment.test_id)),
+    );
+    const releasedModuleIds = new Set(
+      moduleRows
+        .filter((module) => releasedTestIds.has(text(module.test_id)))
+        .map((module) => text(module.id)),
+    );
+    const releasedQuestionIds = new Set(
+      moduleQuestionRows
+        .filter((moduleQuestion) =>
+          releasedModuleIds.has(text(moduleQuestion.module_id)),
+        )
+        .map((moduleQuestion) => text(moduleQuestion.question_id)),
+    );
+    const releasedVersionIds = questionRows
+      .filter((question) => releasedQuestionIds.has(text(question.id)))
+      .map((question) => text(question.current_version_id))
+      .filter(Boolean);
+    const admin = createSupabaseAdminClient();
+    if (admin && releasedVersionIds.length) {
+      const { data, error } = await admin
+        .from("accepted_answers")
+        .select("*")
+        .in("question_version_id", releasedVersionIds);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      answerRows = rows(data);
+    }
+  }
 
   const questions: Question[] = questionRows.flatMap((question) => {
     const version = versionMap.get(text(question.current_version_id));
@@ -273,6 +332,7 @@ export async function GET() {
           text(version.created_at, new Date(0).toISOString()),
         ),
         status: text(question.status) as Question["status"],
+        tags: Array.isArray(question.tags) ? (question.tags as string[]) : [],
         reviewNotes: role === "tutor" ? text(version.review_notes) : undefined,
       },
     ];
@@ -314,7 +374,6 @@ export async function GET() {
     };
   });
 
-  const moduleQuestionRows = rows(moduleQuestionsResult.data);
   const tests: TestDefinition[] = testRows.map((test) => ({
     id: text(test.id),
     title: text(test.title),
@@ -355,6 +414,27 @@ export async function GET() {
           text(assignmentStudent.assignment_id) === text(assignment.id),
       )
       .map((assignmentStudent) => text(assignmentStudent.student_id)),
+    recipients: assignmentStudentRows
+      .filter(
+        (assignmentStudent) =>
+          text(assignmentStudent.assignment_id) === text(assignment.id),
+      )
+      .map((assignmentStudent) => ({
+        studentId: text(assignmentStudent.student_id),
+        availableAt: text(assignmentStudent.available_at) || undefined,
+        dueAt: text(assignmentStudent.due_at) || undefined,
+        attemptLimit:
+          assignmentStudent.attempt_limit === null
+            ? undefined
+            : number(assignmentStudent.attempt_limit) || undefined,
+        status:
+          text(assignmentStudent.recipient_status) === "extended" ||
+          text(assignmentStudent.recipient_status) === "excused"
+            ? (text(assignmentStudent.recipient_status) as "extended" | "excused")
+            : "assigned",
+        timeMultiplier: number(assignmentStudent.time_multiplier, 1) as
+          AssignmentRecipient["timeMultiplier"],
+      })),
     title: text(assignment.title),
     availableAt: text(assignment.available_at),
     dueAt: text(assignment.due_at),
@@ -416,12 +496,49 @@ export async function GET() {
     };
   });
 
+  const releasedReports: ReleasedReport[] = rows(releasedReportsResult.data).map(
+    (report) => {
+      const summary =
+        typeof report.summary === "object" && report.summary !== null
+          ? (report.summary as ReleasedReport["summary"])
+          : {};
+      return {
+        id: text(report.id),
+        attemptId: text(report.attempt_id),
+        releasedBy: text(report.released_by) || undefined,
+        summary,
+        releasedAt: text(report.released_at),
+      };
+    },
+  );
+
   const state: AppState = {
+    settings: normalizeTutorSettings(
+      settingsRow
+        ? {
+            displayName: text(settingsRow.display_name),
+            landingHeadline: text(settingsRow.landing_headline),
+            landingSubheadline: text(settingsRow.landing_subheadline),
+            heroEyebrow: text(settingsRow.hero_eyebrow),
+            heroTitle: text(settingsRow.hero_title),
+            heroSubtitle: text(settingsRow.hero_subtitle),
+            timezone: text(settingsRow.timezone),
+            defaultDueDays: number(settingsRow.default_due_days, 7),
+            defaultAttemptLimit: number(settingsRow.default_attempt_limit, 1),
+            defaultFeedbackPolicy: text(
+              settingsRow.default_feedback_policy,
+              "after_submission",
+            ) as AppState["settings"]["defaultFeedbackPolicy"],
+            defaultAllowResume: Boolean(settingsRow.default_allow_resume),
+          }
+        : undefined,
+    ),
     questions,
     students,
     tests,
     assignments,
     attempts,
+    releasedReports,
   };
 
   return NextResponse.json(

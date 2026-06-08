@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/page-header";
 import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { getStudentAssignmentCards } from "@/lib/assignment-utils";
 import { isDemoMode } from "@/lib/supabase/client";
 
 function isDemoAssignment() {
@@ -22,7 +23,16 @@ function isDemoAssignment() {
 export default function StudentDashboard() {
   const { state } = useAppState();
   const student = state.students[0];
-  const assignment = state.assignments.find((item) => item.status === "open");
+  const assignmentCards = student
+    ? getStudentAssignmentCards(state, student.id)
+    : [];
+  const nextCard =
+    assignmentCards.find((card) =>
+      ["in_progress", "open", "due_soon", "retake_available"].includes(
+        card.status,
+      ),
+    ) ?? assignmentCards[0];
+  const assignment = nextCard?.assignment;
   const test = state.tests.find((item) => item.id === assignment?.testId);
   const studentAttempts = state.attempts.filter(
     (attempt) => attempt.studentId === student?.id,
@@ -53,7 +63,7 @@ export default function StudentDashboard() {
       <PageHeader
         eyebrow="Your practice"
         title={`Welcome back${student?.displayName ? `, ${student.displayName}` : ""}.`}
-        description="Your next assignment is ready. Find a quiet place and use a laptop or tablet."
+        description="Track every assignment, start only when the readiness screen is complete, and review released reports."
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -91,7 +101,9 @@ export default function StudentDashboard() {
           <div className="border-b bg-[var(--navy)] px-6 py-5 text-white">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold text-blue-100">Next assignment</p>
-              <Badge className="bg-white/15 text-white">Open</Badge>
+              <Badge className="bg-white/15 text-white">
+                {nextCard?.label ?? "None"}
+              </Badge>
             </div>
             <h2 className="mt-3 text-2xl font-black">
               {assignment?.title ?? "No open assignment"}
@@ -119,7 +131,7 @@ export default function StudentDashboard() {
                     ? new Intl.DateTimeFormat("en-US", {
                         month: "short",
                         day: "numeric",
-                      }).format(new Date(assignment.dueAt))
+                      }).format(new Date(nextCard?.effectiveDueAt ?? assignment.dueAt))
                     : "No date"}
                 </p>
                 <p className="text-xs text-slate-500">Due date</p>
@@ -195,6 +207,85 @@ export default function StudentDashboard() {
           </Link>
         </Card>
       </div>
+
+      <Card className="mt-6 overflow-hidden">
+        <div className="border-b px-6 py-5">
+          <h2 className="font-extrabold">All assignments</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Status updates appear here when work is released, overdue, or ready
+            for a retake.
+          </p>
+        </div>
+        <div className="divide-y">
+          {assignmentCards.map((card) => {
+            const cardTest = state.tests.find(
+              (item) => item.id === card.assignment.testId,
+            );
+            const canStart = [
+              "open",
+              "due_soon",
+              "in_progress",
+              "retake_available",
+            ].includes(card.status);
+            return (
+              <div
+                key={card.assignment.id}
+                className="grid gap-4 px-6 py-4 md:grid-cols-[1fr_auto_auto] md:items-center"
+              >
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-bold">{card.assignment.title}</p>
+                    <Badge
+                      tone={
+                        card.status === "overdue"
+                          ? "rose"
+                          : card.status === "released"
+                            ? "green"
+                            : card.status === "due_soon"
+                              ? "amber"
+                              : "blue"
+                      }
+                    >
+                      {card.label}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {cardTest?.description ?? "SAT practice"}
+                  </p>
+                </div>
+                <div className="text-sm font-semibold text-slate-500">
+                  Due{" "}
+                  {new Intl.DateTimeFormat("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  }).format(new Date(card.effectiveDueAt))}
+                </div>
+                {canStart ? (
+                  <Link
+                    href={`/student/test/${isDemoAssignment() ? "demo" : card.assignment.id}`}
+                    className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[var(--navy)] px-4 text-sm font-bold text-white hover:bg-[var(--navy-dark)]"
+                  >
+                    {card.status === "in_progress" ? "Resume" : "Start"}
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                ) : (
+                  <Link
+                    href="/student/results"
+                    className="text-sm font-bold text-[var(--blue)]"
+                  >
+                    View results
+                  </Link>
+                )}
+              </div>
+            );
+          })}
+          {!assignmentCards.length && (
+            <div className="px-6 py-10 text-center text-sm text-slate-500">
+              No assignments have been assigned yet.
+            </div>
+          )}
+        </div>
+      </Card>
     </>
   );
 }

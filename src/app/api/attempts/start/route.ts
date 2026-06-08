@@ -33,9 +33,7 @@ export async function POST(request: Request) {
   }
   if (
     !assignment ||
-    assignment.status !== "open" ||
-    now < new Date(assignment.available_at) ||
-    now > new Date(assignment.due_at)
+    assignment.status !== "open"
   ) {
     return NextResponse.json(
       { error: "This assignment is not currently available." },
@@ -44,7 +42,7 @@ export async function POST(request: Request) {
   }
   const { data: recipient, error: recipientError } = await admin
     .from("assignment_students")
-    .select("time_multiplier")
+    .select("time_multiplier,available_at,due_at,attempt_limit,recipient_status")
     .eq("assignment_id", assignment.id)
     .eq("student_id", user.id)
     .maybeSingle();
@@ -53,6 +51,20 @@ export async function POST(request: Request) {
   }
   if (!recipient) {
     return NextResponse.json({ error: "Assignment not found." }, { status: 404 });
+  }
+  const effectiveAvailableAt = recipient.available_at ?? assignment.available_at;
+  const effectiveDueAt = recipient.due_at ?? assignment.due_at;
+  const effectiveAttemptLimit =
+    recipient.attempt_limit ?? assignment.attempt_limit;
+  if (
+    recipient.recipient_status === "excused" ||
+    now < new Date(effectiveAvailableAt) ||
+    now > new Date(effectiveDueAt)
+  ) {
+    return NextResponse.json(
+      { error: "This assignment is not currently available." },
+      { status: 409 },
+    );
   }
   const { data: testModule, error: moduleError } = await admin
     .from("test_modules")
@@ -143,7 +155,7 @@ export async function POST(request: Request) {
     if (countError) {
       return NextResponse.json({ error: countError.message }, { status: 500 });
     }
-    if ((count ?? 0) >= assignment.attempt_limit) {
+    if ((count ?? 0) >= effectiveAttemptLimit) {
       return NextResponse.json(
         { error: "No attempts remain for this assignment." },
         { status: 409 },
@@ -154,8 +166,8 @@ export async function POST(request: Request) {
   const durationMs =
     testModule.duration_minutes * 60_000 * Number(recipient.time_multiplier);
   const deadline = new Date(now.getTime() + durationMs);
-  if (deadline > new Date(assignment.due_at)) {
-    deadline.setTime(new Date(assignment.due_at).getTime());
+  if (deadline > new Date(effectiveDueAt)) {
+    deadline.setTime(new Date(effectiveDueAt).getTime());
   }
 
   if (attempt) {

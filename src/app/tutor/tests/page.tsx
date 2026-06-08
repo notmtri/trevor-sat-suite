@@ -10,6 +10,7 @@ import {
   Copy,
   FileText,
   Plus,
+  RotateCcw,
   Sparkles,
   Trash2,
   Users,
@@ -27,6 +28,10 @@ import type {
   TestDefinition,
   TestModule,
 } from "@/lib/domain";
+import {
+  getAssignmentRecipients,
+  getEffectiveAssignmentWindow,
+} from "@/lib/assignment-utils";
 
 export default function TestsPage() {
   const {
@@ -34,6 +39,7 @@ export default function TestsPage() {
     addTest,
     updateTest,
     addAssignment,
+    updateAssignment,
   } = useAppState();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
@@ -44,11 +50,17 @@ export default function TestsPage() {
     useState<FeedbackPolicy>("after_submission");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
+  const [questionToAddByModule, setQuestionToAddByModule] = useState<
+    Record<string, string>
+  >({});
   const publishedQuestions = useMemo(
     () => state.questions.filter((question) => question.status === "published"),
     [state.questions],
   );
   const activeTest = state.tests.find((test) => test.id === activeTestId);
+  const activeAssignments = state.assignments.filter(
+    (assignment) => assignment.testId === activeTestId,
+  );
   const activeTestAssigned = state.assignments.some(
     (assignment) => assignment.testId === activeTestId,
   );
@@ -178,6 +190,28 @@ export default function TestsPage() {
     });
   }
 
+  function addQuestionToModule(test: TestDefinition, moduleId: string) {
+    const questionId = questionToAddByModule[moduleId];
+    if (!questionId || activeTestAssigned) return;
+    updateTest(test.id, {
+      modules: test.modules.map((module) =>
+        module.id !== moduleId
+          ? module
+          : {
+              ...module,
+              questions: [
+                ...module.questions,
+                {
+                  questionId,
+                  order: module.questions.length + 1,
+                },
+              ],
+            },
+      ),
+    });
+    setQuestionToAddByModule((current) => ({ ...current, [moduleId]: "" }));
+  }
+
   function duplicateActiveTest() {
     if (!activeTest) return;
     const duplicate: TestDefinition = {
@@ -200,17 +234,22 @@ export default function TestsPage() {
     if (!activeTest || !selectedStudentIds.length) return;
     const availableAt = new Date();
     const dueAt = new Date(availableAt);
-    dueAt.setDate(dueAt.getDate() + 7);
+    dueAt.setDate(dueAt.getDate() + state.settings.defaultDueDays);
     const assignment: Assignment = {
       id: crypto.randomUUID(),
       testId: activeTest.id,
       studentIds: selectedStudentIds,
+      recipients: selectedStudentIds.map((studentId) => ({
+        studentId,
+        status: "assigned",
+        attemptLimit: state.settings.defaultAttemptLimit,
+      })),
       title: activeTest.title,
       availableAt: availableAt.toISOString(),
       dueAt: dueAt.toISOString(),
-      attemptLimit: 1,
+      attemptLimit: state.settings.defaultAttemptLimit,
       feedbackPolicy,
-      allowResume: true,
+      allowResume: state.settings.defaultAllowResume,
       status: "open",
     };
     addAssignment(assignment);
@@ -221,6 +260,7 @@ export default function TestsPage() {
 
   function openAssignmentDialog() {
     setSelectedStudentIds(activeStudents.map((student) => student.id));
+    setFeedbackPolicy(state.settings.defaultFeedbackPolicy);
     setStudentSearch("");
     setAssignmentOpen(true);
   }
@@ -231,6 +271,51 @@ export default function TestsPage() {
         ? current.filter((id) => id !== studentId)
         : [...current, studentId],
     );
+  }
+
+  function shiftDays(value: string, days: number) {
+    const date = new Date(value);
+    date.setDate(date.getDate() + days);
+    return date.toISOString();
+  }
+
+  function toDateTimeLocal(value: string) {
+    const date = new Date(value);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function fromDateTimeLocal(value: string) {
+    if (!value) return new Date().toISOString();
+    return new Date(value).toISOString();
+  }
+
+  function updateRecipient(
+    assignment: Assignment,
+    studentId: string,
+    changes: Partial<NonNullable<Assignment["recipients"]>[number]>,
+  ) {
+    const recipients = getAssignmentRecipients(assignment);
+    const existing = recipients.find(
+      (recipient) => recipient.studentId === studentId,
+    );
+    const nextRecipient = {
+      ...(existing ?? { studentId, status: "assigned" as const }),
+      ...changes,
+    };
+    const nextRecipients = recipients.some(
+      (recipient) => recipient.studentId === studentId,
+    )
+      ? recipients.map((recipient) =>
+          recipient.studentId === studentId ? nextRecipient : recipient,
+        )
+      : [...recipients, nextRecipient];
+    updateAssignment(assignment.id, {
+      recipients: nextRecipients,
+      studentIds: nextRecipients
+        .filter((recipient) => recipient.status !== "excused")
+        .map((recipient) => recipient.studentId),
+    });
   }
 
   return (
@@ -423,6 +508,44 @@ export default function TestsPage() {
                           );
                         })}
                       </div>
+                      {!activeTestAssigned && (
+                        <div className="grid gap-3 border-t bg-slate-50 p-4 sm:grid-cols-[1fr_auto]">
+                          <Select
+                            value={questionToAddByModule[module.id] ?? ""}
+                            onChange={(event) =>
+                              setQuestionToAddByModule((current) => ({
+                                ...current,
+                                [module.id]: event.target.value,
+                              }))
+                            }
+                            aria-label={`Add question to ${module.title}`}
+                          >
+                            <option value="">Add a published question</option>
+                            {publishedQuestions
+                              .filter(
+                                (question) =>
+                                  question.section === module.section &&
+                                  !module.questions.some(
+                                    (item) => item.questionId === question.id,
+                                  ),
+                              )
+                              .map((question) => (
+                                <option key={question.id} value={question.id}>
+                                  {question.sourceId} - {question.skill}
+                                </option>
+                              ))}
+                          </Select>
+                          <Button
+                            variant="secondary"
+                            disabled={!questionToAddByModule[module.id]}
+                            onClick={() =>
+                              addQuestionToModule(activeTest, module.id)
+                            }
+                          >
+                            Add question
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -435,6 +558,268 @@ export default function TestsPage() {
                   </p>
                 </div>
               )}
+
+              <div className="mt-8 rounded-2xl border">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-50 px-5 py-4">
+                  <div>
+                    <h3 className="font-extrabold">Assignment controls</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Close/reopen assignments, extend students, or allow
+                      retakes without changing the locked test.
+                    </p>
+                  </div>
+                  <Badge tone={activeAssignments.length ? "blue" : "amber"}>
+                    {activeAssignments.length} assignment
+                    {activeAssignments.length === 1 ? "" : "s"}
+                  </Badge>
+                </div>
+                <div className="divide-y">
+                  {activeAssignments.map((assignment) => (
+                    <div key={assignment.id} className="p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-black">{assignment.title}</p>
+                            <Badge
+                              tone={
+                                assignment.status === "open"
+                                  ? "green"
+                                  : assignment.status === "closed"
+                                    ? "rose"
+                                    : "amber"
+                              }
+                            >
+                              {assignment.status}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-sm text-slate-500">
+                            Due{" "}
+                            {new Intl.DateTimeFormat("en-US", {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            }).format(new Date(assignment.dueAt))}{" "}
+                            - {assignment.attemptLimit} attempt
+                            {assignment.attemptLimit === 1 ? "" : "s"} -{" "}
+                            {assignment.feedbackPolicy.replaceAll("_", " ")}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() =>
+                              updateAssignment(assignment.id, {
+                                dueAt: shiftDays(assignment.dueAt, 7),
+                              })
+                            }
+                          >
+                            Extend all 7 days
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={
+                              assignment.status === "closed"
+                                ? "secondary"
+                                : "danger"
+                            }
+                            onClick={() =>
+                              updateAssignment(assignment.id, {
+                                status:
+                                  assignment.status === "closed"
+                                    ? "open"
+                                    : "closed",
+                              })
+                            }
+                          >
+                            {assignment.status === "closed"
+                              ? "Reopen"
+                              : "Close"}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                        <div>
+                          <FieldLabel htmlFor={`available-${assignment.id}`}>
+                            Available
+                          </FieldLabel>
+                          <Input
+                            id={`available-${assignment.id}`}
+                            type="datetime-local"
+                            value={toDateTimeLocal(assignment.availableAt)}
+                            onChange={(event) =>
+                              updateAssignment(assignment.id, {
+                                availableAt: fromDateTimeLocal(
+                                  event.target.value,
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel htmlFor={`due-${assignment.id}`}>
+                            Due
+                          </FieldLabel>
+                          <Input
+                            id={`due-${assignment.id}`}
+                            type="datetime-local"
+                            value={toDateTimeLocal(assignment.dueAt)}
+                            onChange={(event) =>
+                              updateAssignment(assignment.id, {
+                                dueAt: fromDateTimeLocal(event.target.value),
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel htmlFor={`limit-${assignment.id}`}>
+                            Attempts
+                          </FieldLabel>
+                          <Input
+                            id={`limit-${assignment.id}`}
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={assignment.attemptLimit}
+                            onChange={(event) =>
+                              updateAssignment(assignment.id, {
+                                attemptLimit: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel htmlFor={`policy-${assignment.id}`}>
+                            Feedback
+                          </FieldLabel>
+                          <Select
+                            id={`policy-${assignment.id}`}
+                            value={assignment.feedbackPolicy}
+                            onChange={(event) =>
+                              updateAssignment(assignment.id, {
+                                feedbackPolicy:
+                                  event.target.value as FeedbackPolicy,
+                              })
+                            }
+                          >
+                            <option value="immediate">Immediate</option>
+                            <option value="after_submission">
+                              After submission
+                            </option>
+                            <option value="tutor_release">Tutor release</option>
+                          </Select>
+                        </div>
+                        <div>
+                          <FieldLabel htmlFor={`status-${assignment.id}`}>
+                            Status
+                          </FieldLabel>
+                          <Select
+                            id={`status-${assignment.id}`}
+                            value={assignment.status}
+                            onChange={(event) =>
+                              updateAssignment(assignment.id, {
+                                status:
+                                  event.target
+                                    .value as Assignment["status"],
+                              })
+                            }
+                          >
+                            <option value="scheduled">Scheduled</option>
+                            <option value="open">Open</option>
+                            <option value="closed">Closed</option>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 overflow-hidden rounded-xl border">
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-slate-50 px-4 py-2 text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                          <span>Student</span>
+                          <span>Window</span>
+                          <span>Actions</span>
+                        </div>
+                        <div className="divide-y">
+                          {getAssignmentRecipients(assignment).map(
+                            (recipient) => {
+                              const student = state.students.find(
+                                (item) => item.id === recipient.studentId,
+                              );
+                              const window = getEffectiveAssignmentWindow(
+                                assignment,
+                                recipient.studentId,
+                              );
+                              return (
+                                <div
+                                  key={recipient.studentId}
+                                  className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto_auto] md:items-center"
+                                >
+                                  <div>
+                                    <p className="text-sm font-bold">
+                                      {student?.displayName ?? "Student"}
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                      {recipient.status} -{" "}
+                                      {window.attemptLimit} attempt
+                                      {window.attemptLimit === 1 ? "" : "s"}
+                                    </p>
+                                  </div>
+                                  <p className="text-xs font-semibold text-slate-500">
+                                    Due{" "}
+                                    {new Intl.DateTimeFormat("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                    }).format(new Date(window.dueAt))}
+                                  </p>
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() =>
+                                        updateRecipient(
+                                          assignment,
+                                          recipient.studentId,
+                                          {
+                                            status: "extended",
+                                            dueAt: shiftDays(window.dueAt, 7),
+                                          },
+                                        )
+                                      }
+                                    >
+                                      Extend
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      icon={<RotateCcw className="h-4 w-4" />}
+                                      onClick={() =>
+                                        updateRecipient(
+                                          assignment,
+                                          recipient.studentId,
+                                          {
+                                            attemptLimit:
+                                              window.attemptLimit + 1,
+                                          },
+                                        )
+                                      }
+                                    >
+                                      Retake
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            },
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {!activeAssignments.length && (
+                    <div className="px-5 py-8 text-center text-sm text-slate-500">
+                      Assign this test to students to manage availability,
+                      retakes, and release controls.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </Card>
         ) : (
@@ -528,9 +913,11 @@ export default function TestsPage() {
               Assign {activeTest?.title}
             </Dialog.Title>
             <Dialog.Description className="mt-1 text-sm text-slate-500">
-              This assignment opens now, is due in seven days, allows one
-              attempt, and respects each selected student&apos;s time
-              multiplier.
+              This assignment opens now, is due in{" "}
+              {state.settings.defaultDueDays} days, allows{" "}
+              {state.settings.defaultAttemptLimit} attempt
+              {state.settings.defaultAttemptLimit === 1 ? "" : "s"}, and
+              respects each selected student&apos;s time multiplier.
             </Dialog.Description>
             <div className="mt-5 overflow-hidden rounded-xl border">
               <div className="border-b bg-slate-50 p-4">

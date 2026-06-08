@@ -2,9 +2,12 @@
 
 import type {
   Assignment,
+  Attempt,
   Question,
+  ReleasedReport,
   Student,
   TestDefinition,
+  TutorSettings,
 } from "@/lib/domain";
 
 async function request(
@@ -36,6 +39,7 @@ export function persistQuestionChanges(
     domain: changes.domain,
     skill: changes.skill,
     difficulty: changes.difficulty,
+    tags: changes.tags,
   });
 }
 
@@ -58,4 +62,38 @@ export function persistTest(test: TestDefinition) {
 
 export function persistAssignment(assignment: Assignment) {
   return request("/api/admin/assignments", "POST", assignment);
+}
+
+export function persistAssignmentChanges(
+  id: string,
+  changes: Partial<Assignment>,
+) {
+  return request("/api/admin/assignments", "PATCH", {
+    id,
+    title: changes.title,
+    availableAt: changes.availableAt,
+    dueAt: changes.dueAt,
+    attemptLimit: changes.attemptLimit,
+    feedbackPolicy: changes.feedbackPolicy,
+    allowResume: changes.allowResume,
+    status: changes.status,
+    recipients: changes.recipients,
+  });
+}
+
+export function persistAttemptChanges(
+  id: string,
+  changes: Partial<Attempt>,
+  report?: ReleasedReport,
+) {
+  return request("/api/admin/attempts", "PATCH", {
+    id,
+    released: changes.released,
+    status: changes.status,
+    report,
+  });
+}
+
+export function persistTutorSettings(changes: Partial<TutorSettings>) {
+  return request("/api/admin/settings", "PATCH", changes);
 }

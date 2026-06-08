@@ -923,7 +923,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 </p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   Your Reading and Writing answers are locked. Continue when
-                  you are ready to begin the next section.
+                  you are ready to begin the next section. Use this pause to
+                  stretch, get water, and reset your workspace.
                 </p>
               </>
             ) : moduleDone ? (
@@ -933,7 +934,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   Your answers for {activeModule.title} are saved.
                 </p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  You cannot return after moving to the next module.
+                  This module is locked, matching the real testing flow. Once
+                  you continue, you cannot return to these questions.
                 </p>
               </>
             ) : (
@@ -971,6 +973,21 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   Responses save automatically in this browser and synchronize
                   through a heartbeat. The timer is based on an absolute
                   deadline and continues if the connection drops.
+                </div>
+                <div className="mt-4 grid gap-2 rounded-xl bg-blue-50 p-4 text-sm font-semibold text-blue-900">
+                  <p>Before starting, confirm:</p>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    Your question images are fully prepared below.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    You are on a laptop or tablet with a stable connection.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    Scratch paper, calculator rules, and quiet space are ready.
+                  </div>
                 </div>
               </>
             )}

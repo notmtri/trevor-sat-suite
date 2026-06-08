@@ -1,3 +1,5 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -8,10 +10,13 @@ import {
   FileImage,
   ShieldCheck,
 } from "lucide-react";
-import { isDemoMode } from "@/lib/runtime-config";
+import { useAppState } from "@/components/providers/app-state-provider";
+import { isDemoMode } from "@/lib/supabase/client";
 
 export default function Home() {
   const demo = isDemoMode();
+  const { state } = useAppState();
+  const settings = state.settings;
   return (
     <main className="min-h-screen bg-white">
       <nav className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
@@ -51,12 +56,10 @@ export default function Home() {
               Built for one-on-one SAT tutoring
             </div>
             <h1 className="max-w-3xl text-5xl font-black leading-[1.08] tracking-tight text-[var(--navy-dark)] sm:text-6xl">
-              Serious SAT practice, with realistic testing experience.
+              {settings.landingHeadline}
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              Practice tutor-approved SAT question from College Board&apos;s
-              official question bank. Experience a painstakingly designed testing
-              interface.
+              {settings.landingSubheadline}
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
@@ -90,11 +93,13 @@ export default function Home() {
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[var(--navy-dark)]/85 via-[var(--navy-dark)]/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6 text-white sm:p-8">
                 <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-blue-100">
-                  Your SAT tutor
+                  {settings.heroEyebrow}
                 </p>
-                <p className="mt-2 text-3xl font-black">Hi, I&apos;m Trevor.</p>
+                <p className="mt-2 text-3xl font-black">
+                  {settings.heroTitle}
+                </p>
                 <p className="mt-2 max-w-md text-sm leading-6 text-blue-50">
-                  CompSci Undergraduate | 1550 SAT | 8.5 IELTS
+                  {settings.heroSubtitle}
                 </p>
               </div>
             </div>
