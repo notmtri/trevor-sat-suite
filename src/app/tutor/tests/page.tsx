@@ -3,14 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  ArrowDown,
-  ArrowUp,
+  Archive,
   CalendarClock,
   Check,
   Copy,
-  FileText,
   Plus,
   RotateCcw,
+  Search,
   Sparkles,
   Trash2,
   Users,
@@ -25,34 +24,62 @@ import { FieldLabel, Input, Select } from "@/components/ui/field";
 import type {
   Assignment,
   FeedbackPolicy,
+  Question,
   TestDefinition,
   TestModule,
+  WorkType,
 } from "@/lib/domain";
 import {
   getAssignmentRecipients,
   getEffectiveAssignmentWindow,
 } from "@/lib/assignment-utils";
+import {
+  modulesForWorkType,
+  questionCountForTest,
+  validateTestForAssignment,
+  WORK_TYPE_CONFIGS,
+  WORK_TYPES,
+  workTypeLabel,
+} from "@/lib/work-types";
+
+function shiftDays(value: string, days: number) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+function toDateTimeLocal(value: string) {
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value: string) {
+  if (!value) return new Date().toISOString();
+  return new Date(value).toISOString();
+}
+
+function sortModuleQuestions(module: TestModule) {
+  return [...module.questions].sort((a, b) => a.order - b.order);
+}
 
 export default function TestsPage() {
-  const {
-    state,
-    addTest,
-    updateTest,
-    addAssignment,
-    updateAssignment,
-  } = useAppState();
+  const { state, addTest, updateTest, addAssignment, updateAssignment } =
+    useAppState();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [activeTestId, setActiveTestId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const [mode, setMode] = useState<"practice" | "exam">("practice");
+  const [workType, setWorkType] = useState<WorkType>("custom");
+  const [customSection, setCustomSection] =
+    useState<Question["section"]>("Math");
+  const [customDuration, setCustomDuration] = useState(20);
   const [feedbackPolicy, setFeedbackPolicy] =
     useState<FeedbackPolicy>("after_submission");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
-  const [questionToAddByModule, setQuestionToAddByModule] = useState<
-    Record<string, string>
-  >({});
+  const [moduleSearch, setModuleSearch] = useState<Record<string, string>>({});
+
   const publishedQuestions = useMemo(
     () => state.questions.filter((question) => question.status === "published"),
     [state.questions],
@@ -72,6 +99,9 @@ export default function TestsPage() {
       .toLowerCase()
       .includes(studentSearch.trim().toLowerCase()),
   );
+  const validation = activeTest
+    ? validateTestForAssignment(activeTest)
+    : { valid: false, errors: [] };
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -90,126 +120,35 @@ export default function TestsPage() {
 
   function buildDraft() {
     const id = crypto.randomUUID();
-    const grouped = [
-      {
-        section: "Reading and Writing" as const,
-        questions: publishedQuestions.filter(
-          (question) => question.section === "Reading and Writing",
-        ),
-        duration: mode === "exam" ? 32 : 20,
-      },
-      {
-        section: "Math" as const,
-        questions: publishedQuestions.filter(
-          (question) => question.section === "Math",
-        ),
-        duration: mode === "exam" ? 35 : 20,
-      },
-    ].filter((group) => group.questions.length);
-    const modules: TestModule[] = grouped.map((group, index) => ({
-      id: crypto.randomUUID(),
-      title: `${group.section} Module 1`,
-      section: group.section,
-      durationMinutes: group.duration,
-      route: "common",
-      order: index + 1,
-      questions: group.questions.map((question, questionIndex) => ({
-        questionId: question.id,
-        order: questionIndex + 1,
-        unscored:
-          mode === "exam" &&
-          questionIndex >= Math.max(0, group.questions.length - 2),
-      })),
-    }));
+    const config = WORK_TYPE_CONFIGS[workType];
+    const modules = modulesForWorkType(workType);
+    const customModules =
+      workType === "custom"
+        ? modules.map((module) => ({
+            ...module,
+            title: `${customSection} Custom Practice`,
+            section: customSection,
+            durationMinutes: customDuration,
+          }))
+        : modules;
     const test: TestDefinition = {
       id,
       title: title.trim(),
-      description:
-        mode === "exam"
-          ? "Adaptive SAT simulation with unofficial score estimate."
-          : "Tutor-built targeted practice.",
-      mode,
+      description: config.description,
+      mode: config.mode,
+      workType,
       status: "draft",
       routingThreshold: 0.6,
-      modules,
+      modules: customModules,
       createdAt: new Date().toISOString(),
     };
     addTest(test);
     setActiveTestId(id);
     setBuilderOpen(false);
     setTitle("");
-  }
-
-  function moveQuestion(
-    test: TestDefinition,
-    moduleId: string,
-    index: number,
-    direction: -1 | 1,
-  ) {
-    updateTest(test.id, {
-      modules: test.modules.map((module) => {
-        if (module.id !== moduleId) return module;
-        const questions = [...module.questions];
-        const target = index + direction;
-        if (target < 0 || target >= questions.length) return module;
-        [questions[index], questions[target]] = [
-          questions[target],
-          questions[index],
-        ];
-        return {
-          ...module,
-          questions: questions.map((question, order) => ({
-            ...question,
-            order: order + 1,
-          })),
-        };
-      }),
-    });
-  }
-
-  function removeQuestion(
-    test: TestDefinition,
-    moduleId: string,
-    questionId: string,
-  ) {
-    if (activeTestAssigned) return;
-    updateTest(test.id, {
-      modules: test.modules.map((module) =>
-        module.id !== moduleId
-          ? module
-          : {
-              ...module,
-              questions: module.questions
-                .filter((question) => question.questionId !== questionId)
-                .map((question, index) => ({
-                  ...question,
-                  order: index + 1,
-                })),
-            },
-      ),
-    });
-  }
-
-  function addQuestionToModule(test: TestDefinition, moduleId: string) {
-    const questionId = questionToAddByModule[moduleId];
-    if (!questionId || activeTestAssigned) return;
-    updateTest(test.id, {
-      modules: test.modules.map((module) =>
-        module.id !== moduleId
-          ? module
-          : {
-              ...module,
-              questions: [
-                ...module.questions,
-                {
-                  questionId,
-                  order: module.questions.length + 1,
-                },
-              ],
-            },
-      ),
-    });
-    setQuestionToAddByModule((current) => ({ ...current, [moduleId]: "" }));
+    setWorkType("custom");
+    setCustomSection("Math");
+    setCustomDuration(20);
   }
 
   function duplicateActiveTest() {
@@ -230,8 +169,52 @@ export default function TestsPage() {
     setActiveTestId(duplicate.id);
   }
 
+  function updateModule(moduleId: string, changes: Partial<TestModule>) {
+    if (!activeTest || activeTestAssigned) return;
+    updateTest(activeTest.id, {
+      modules: activeTest.modules.map((module) =>
+        module.id === moduleId ? { ...module, ...changes } : module,
+      ),
+    });
+  }
+
+  function addQuestionToModule(moduleId: string, questionId: string) {
+    if (!activeTest || activeTestAssigned) return;
+    updateTest(activeTest.id, {
+      modules: activeTest.modules.map((module) => {
+        if (module.id !== moduleId) return module;
+        if (module.questions.some((question) => question.questionId === questionId)) {
+          return module;
+        }
+        return {
+          ...module,
+          questions: [
+            ...sortModuleQuestions(module),
+            { questionId, order: module.questions.length + 1 },
+          ],
+        };
+      }),
+    });
+  }
+
+  function removeQuestion(moduleId: string, questionId: string) {
+    if (!activeTest || activeTestAssigned) return;
+    updateTest(activeTest.id, {
+      modules: activeTest.modules.map((module) =>
+        module.id !== moduleId
+          ? module
+          : {
+              ...module,
+              questions: sortModuleQuestions(module)
+                .filter((question) => question.questionId !== questionId)
+                .map((question, index) => ({ ...question, order: index + 1 })),
+            },
+      ),
+    });
+  }
+
   function assignTest() {
-    if (!activeTest || !selectedStudentIds.length) return;
+    if (!activeTest || !selectedStudentIds.length || !validation.valid) return;
     const availableAt = new Date();
     const dueAt = new Date(availableAt);
     dueAt.setDate(dueAt.getDate() + state.settings.defaultDueDays);
@@ -273,23 +256,6 @@ export default function TestsPage() {
     );
   }
 
-  function shiftDays(value: string, days: number) {
-    const date = new Date(value);
-    date.setDate(date.getDate() + days);
-    return date.toISOString();
-  }
-
-  function toDateTimeLocal(value: string) {
-    const date = new Date(value);
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-    return local.toISOString().slice(0, 16);
-  }
-
-  function fromDateTimeLocal(value: string) {
-    if (!value) return new Date().toISOString();
-    return new Date(value).toISOString();
-  }
-
   function updateRecipient(
     assignment: Assignment,
     studentId: string,
@@ -323,7 +289,7 @@ export default function TestsPage() {
       <PageHeader
         eyebrow="Authoring"
         title="Tests & assignments"
-        description="Build targeted practice manually or let the assistant draft modules from your published library."
+        description="Build fixed SAT-style work types from your question bank, then assign them to specific students."
         actions={
           <Button
             icon={<Plus className="h-4 w-4" />}
@@ -337,10 +303,7 @@ export default function TestsPage() {
       <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
         <div className="space-y-3">
           {state.tests.map((test) => {
-            const questionCount = test.modules.reduce(
-              (sum, module) => sum + module.questions.length,
-              0,
-            );
+            const questionCount = questionCountForTest(test);
             return (
               <button
                 key={test.id}
@@ -352,13 +315,11 @@ export default function TestsPage() {
                     : "hover:border-slate-300"
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <Badge tone={test.mode === "exam" ? "blue" : "green"}>
-                    {test.mode}
+                    {workTypeLabel(test.workType)}
                   </Badge>
-                  <Badge
-                    tone={test.status === "published" ? "green" : "amber"}
-                  >
+                  <Badge tone={test.status === "published" ? "green" : "amber"}>
                     {test.status}
                   </Badge>
                 </div>
@@ -375,14 +336,14 @@ export default function TestsPage() {
           <Card className="overflow-hidden">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b px-6 py-5">
               <div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Badge tone={activeTest.mode === "exam" ? "blue" : "green"}>
-                    {activeTest.mode}
+                    {workTypeLabel(activeTest.workType)}
                   </Badge>
-                  {activeTest.mode === "exam" && (
-                    <Badge tone="amber">
-                      Unofficial adaptive simulation
-                    </Badge>
+                  {validation.valid ? (
+                    <Badge tone="green">Ready to assign</Badge>
+                  ) : (
+                    <Badge tone="amber">Needs setup</Badge>
                   )}
                 </div>
                 <h2 className="mt-3 text-2xl font-black">{activeTest.title}</h2>
@@ -400,7 +361,7 @@ export default function TestsPage() {
                 </Button>
                 <Button
                   icon={<CalendarClock className="h-4 w-4" />}
-                  disabled={!activeTest.modules.length}
+                  disabled={!validation.valid}
                   onClick={openAssignmentDialog}
                 >
                   Assign
@@ -409,86 +370,130 @@ export default function TestsPage() {
             </div>
 
             <div className="p-6">
-              {activeTest.mode === "exam" && (
-                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                  The routing threshold is{" "}
-                  <strong>{Math.round(activeTest.routingThreshold * 100)}%</strong>.
-                  Add easier and harder Module 2 branches before publishing a
-                  full adaptive simulation. Operational College Board scoring is
-                  not reproduced.
-                </div>
-              )}
               {activeTestAssigned && (
                 <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-                  This test has been assigned, so its question order and
-                  contents are locked. Duplicate it to create an editable
-                  version without changing student attempts.
+                  This test has been assigned, so its question order and contents
+                  are locked. Duplicate it to create an editable version.
                 </div>
               )}
-              {activeTest.modules.length ? (
-                <div className="space-y-5">
-                  {activeTest.modules.map((module) => (
-                    <div key={module.id} className="rounded-2xl border">
-                      <div className="flex items-center justify-between border-b bg-slate-50 px-5 py-4">
-                        <div>
-                          <p className="font-extrabold">{module.title}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {module.durationMinutes} minutes ·{" "}
-                            {module.questions.length} questions · {module.route} route
-                          </p>
+              {!validation.valid && (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+                  <p className="font-black">Template checklist</p>
+                  <ul className="mt-2 list-inside list-disc">
+                    {validation.errors.map((error) => (
+                      <li key={error}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="space-y-5">
+                {activeTest.modules
+                  .filter((module) => module.route === "common")
+                  .sort((a, b) => a.order - b.order)
+                  .map((module) => {
+                    const template =
+                      WORK_TYPE_CONFIGS[activeTest.workType].modules[
+                        module.order - 1
+                      ];
+                    const moduleQuestions = sortModuleQuestions(module);
+                    const search = moduleSearch[module.id]?.toLowerCase() ?? "";
+                    const available = publishedQuestions
+                      .filter((question) => question.section === module.section)
+                      .filter(
+                        (question) =>
+                          !module.questions.some(
+                            (item) => item.questionId === question.id,
+                          ),
+                      )
+                      .filter((question) =>
+                        `${question.sourceId} ${question.domain} ${question.skill} ${(question.tags ?? []).join(" ")}`
+                          .toLowerCase()
+                          .includes(search),
+                      )
+                      .slice(0, 12);
+                    return (
+                      <div key={module.id} className="rounded-2xl border">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-50 px-5 py-4">
+                          <div>
+                            <p className="font-extrabold">{module.title}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {module.durationMinutes} minutes ·{" "}
+                              {module.questions.length} question
+                              {module.questions.length === 1 ? "" : "s"}
+                              {template
+                                ? ` · target ${template.questionCount}`
+                                : ""}
+                            </p>
+                          </div>
+                          <Badge tone="blue">{module.section}</Badge>
                         </div>
-                        <Badge tone="blue">{module.section}</Badge>
-                      </div>
-                      <div className="divide-y">
-                        {module.questions.map((item, index) => {
-                          const question = state.questions.find(
-                            (candidate) => candidate.id === item.questionId,
-                          );
-                          return (
-                            <div
-                              key={item.questionId}
-                              className="flex items-center gap-3 px-5 py-3"
-                              draggable
-                            >
-                              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">
-                                {index + 1}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-bold">
-                                  {question?.sourceId} · {question?.skill}
-                                </p>
-                                <p className="text-xs text-slate-500">
-                                  {question?.difficulty} ·{" "}
-                                  {question?.responseType === "multiple_choice"
-                                    ? "A–D"
-                                    : "SPR"}
-                                </p>
-                              </div>
-                              {item.unscored && (
-                                <Badge tone="amber">simulated unscored</Badge>
-                              )}
-                              <div className="flex">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  icon={<ArrowUp className="h-4 w-4" />}
-                                  disabled={activeTestAssigned || index === 0}
-                                  onClick={() =>
-                                    moveQuestion(activeTest, module.id, index, -1)
-                                  }
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  icon={<ArrowDown className="h-4 w-4" />}
-                                  disabled={
-                                    activeTestAssigned ||
-                                    index === module.questions.length - 1
-                                  }
-                                  onClick={() =>
-                                    moveQuestion(activeTest, module.id, index, 1)
-                                  }
-                                />
+
+                        {activeTest.workType === "custom" && !activeTestAssigned && (
+                          <div className="grid gap-3 border-b p-4 sm:grid-cols-2">
+                            <div>
+                              <FieldLabel htmlFor={`section-${module.id}`}>
+                                Section
+                              </FieldLabel>
+                              <Select
+                                id={`section-${module.id}`}
+                                value={module.section}
+                                onChange={(event) =>
+                                  updateModule(module.id, {
+                                    section: event.target
+                                      .value as Question["section"],
+                                    questions: [],
+                                  })
+                                }
+                              >
+                                <option>Math</option>
+                                <option>Reading and Writing</option>
+                              </Select>
+                            </div>
+                            <div>
+                              <FieldLabel htmlFor={`duration-${module.id}`}>
+                                Minutes
+                              </FieldLabel>
+                              <Input
+                                id={`duration-${module.id}`}
+                                type="number"
+                                min={1}
+                                max={240}
+                                value={module.durationMinutes}
+                                onChange={(event) =>
+                                  updateModule(module.id, {
+                                    durationMinutes: Number(event.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="divide-y">
+                          {moduleQuestions.map((item, index) => {
+                            const question = state.questions.find(
+                              (candidate) => candidate.id === item.questionId,
+                            );
+                            return (
+                              <div
+                                key={item.questionId}
+                                className="flex items-center gap-3 px-5 py-3"
+                              >
+                                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-bold">
+                                    {question?.sourceId} · {question?.skill}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {question?.difficulty} ·{" "}
+                                    {question?.responseType === "multiple_choice"
+                                      ? "A-D"
+                                      : "SPR"}
+                                  </p>
+                                </div>
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -497,328 +502,322 @@ export default function TestsPage() {
                                   disabled={activeTestAssigned}
                                   onClick={() =>
                                     removeQuestion(
-                                      activeTest,
                                       module.id,
                                       item.questionId,
                                     )
                                   }
                                 />
                               </div>
+                            );
+                          })}
+                          {!moduleQuestions.length && (
+                            <div className="px-5 py-8 text-center text-sm text-slate-500">
+                              Add questions from the library table below.
                             </div>
-                          );
-                        })}
-                      </div>
-                      {!activeTestAssigned && (
-                        <div className="grid gap-3 border-t bg-slate-50 p-4 sm:grid-cols-[1fr_auto]">
-                          <Select
-                            value={questionToAddByModule[module.id] ?? ""}
-                            onChange={(event) =>
-                              setQuestionToAddByModule((current) => ({
-                                ...current,
-                                [module.id]: event.target.value,
-                              }))
-                            }
-                            aria-label={`Add question to ${module.title}`}
-                          >
-                            <option value="">Add a published question</option>
-                            {publishedQuestions
-                              .filter(
-                                (question) =>
-                                  question.section === module.section &&
-                                  !module.questions.some(
-                                    (item) => item.questionId === question.id,
-                                  ),
-                              )
-                              .map((question) => (
-                                <option key={question.id} value={question.id}>
-                                  {question.sourceId} - {question.skill}
-                                </option>
-                              ))}
-                          </Select>
-                          <Button
-                            variant="secondary"
-                            disabled={!questionToAddByModule[module.id]}
-                            onClick={() =>
-                              addQuestionToModule(activeTest, module.id)
-                            }
-                          >
-                            Add question
-                          </Button>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="py-16 text-center">
-                  <FileText className="mx-auto h-10 w-10 text-slate-300" />
-                  <p className="mt-4 font-bold">No modules yet</p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Import and publish enough questions to build this test.
-                  </p>
-                </div>
-              )}
 
-              <div className="mt-8 rounded-2xl border">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-slate-50 px-5 py-4">
-                  <div>
-                    <h3 className="font-extrabold">Assignment controls</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Close/reopen assignments, extend students, or allow
-                      retakes without changing the locked test.
-                    </p>
-                  </div>
-                  <Badge tone={activeAssignments.length ? "blue" : "amber"}>
-                    {activeAssignments.length} assignment
-                    {activeAssignments.length === 1 ? "" : "s"}
-                  </Badge>
-                </div>
-                <div className="divide-y">
-                  {activeAssignments.map((assignment) => (
-                    <div key={assignment.id} className="p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-black">{assignment.title}</p>
-                            <Badge
-                              tone={
-                                assignment.status === "open"
-                                  ? "green"
-                                  : assignment.status === "closed"
-                                    ? "rose"
-                                    : "amber"
-                              }
-                            >
-                              {assignment.status}
-                            </Badge>
-                          </div>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Due{" "}
-                            {new Intl.DateTimeFormat("en-US", {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            }).format(new Date(assignment.dueAt))}{" "}
-                            - {assignment.attemptLimit} attempt
-                            {assignment.attemptLimit === 1 ? "" : "s"} -{" "}
-                            {assignment.feedbackPolicy.replaceAll("_", " ")}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() =>
-                              updateAssignment(assignment.id, {
-                                dueAt: shiftDays(assignment.dueAt, 7),
-                              })
-                            }
-                          >
-                            Extend all 7 days
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={
-                              assignment.status === "closed"
-                                ? "secondary"
-                                : "danger"
-                            }
-                            onClick={() =>
-                              updateAssignment(assignment.id, {
-                                status:
-                                  assignment.status === "closed"
-                                    ? "open"
-                                    : "closed",
-                              })
-                            }
-                          >
-                            {assignment.status === "closed"
-                              ? "Reopen"
-                              : "Close"}
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                        <div>
-                          <FieldLabel htmlFor={`available-${assignment.id}`}>
-                            Available
-                          </FieldLabel>
-                          <Input
-                            id={`available-${assignment.id}`}
-                            type="datetime-local"
-                            value={toDateTimeLocal(assignment.availableAt)}
-                            onChange={(event) =>
-                              updateAssignment(assignment.id, {
-                                availableAt: fromDateTimeLocal(
-                                  event.target.value,
-                                ),
-                              })
-                            }
-                          />
-                        </div>
-                        <div>
-                          <FieldLabel htmlFor={`due-${assignment.id}`}>
-                            Due
-                          </FieldLabel>
-                          <Input
-                            id={`due-${assignment.id}`}
-                            type="datetime-local"
-                            value={toDateTimeLocal(assignment.dueAt)}
-                            onChange={(event) =>
-                              updateAssignment(assignment.id, {
-                                dueAt: fromDateTimeLocal(event.target.value),
-                              })
-                            }
-                          />
-                        </div>
-                        <div>
-                          <FieldLabel htmlFor={`limit-${assignment.id}`}>
-                            Attempts
-                          </FieldLabel>
-                          <Input
-                            id={`limit-${assignment.id}`}
-                            type="number"
-                            min={1}
-                            max={20}
-                            value={assignment.attemptLimit}
-                            onChange={(event) =>
-                              updateAssignment(assignment.id, {
-                                attemptLimit: Number(event.target.value),
-                              })
-                            }
-                          />
-                        </div>
-                        <div>
-                          <FieldLabel htmlFor={`policy-${assignment.id}`}>
-                            Feedback
-                          </FieldLabel>
-                          <Select
-                            id={`policy-${assignment.id}`}
-                            value={assignment.feedbackPolicy}
-                            onChange={(event) =>
-                              updateAssignment(assignment.id, {
-                                feedbackPolicy:
-                                  event.target.value as FeedbackPolicy,
-                              })
-                            }
-                          >
-                            <option value="immediate">Immediate</option>
-                            <option value="after_submission">
-                              After submission
-                            </option>
-                            <option value="tutor_release">Tutor release</option>
-                          </Select>
-                        </div>
-                        <div>
-                          <FieldLabel htmlFor={`status-${assignment.id}`}>
-                            Status
-                          </FieldLabel>
-                          <Select
-                            id={`status-${assignment.id}`}
-                            value={assignment.status}
-                            onChange={(event) =>
-                              updateAssignment(assignment.id, {
-                                status:
-                                  event.target
-                                    .value as Assignment["status"],
-                              })
-                            }
-                          >
-                            <option value="scheduled">Scheduled</option>
-                            <option value="open">Open</option>
-                            <option value="closed">Closed</option>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 overflow-hidden rounded-xl border">
-                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-slate-50 px-4 py-2 text-xs font-extrabold uppercase tracking-wide text-slate-500">
-                          <span>Student</span>
-                          <span>Window</span>
-                          <span>Actions</span>
-                        </div>
-                        <div className="divide-y">
-                          {getAssignmentRecipients(assignment).map(
-                            (recipient) => {
-                              const student = state.students.find(
-                                (item) => item.id === recipient.studentId,
-                              );
-                              const window = getEffectiveAssignmentWindow(
-                                assignment,
-                                recipient.studentId,
-                              );
-                              return (
-                                <div
-                                  key={recipient.studentId}
-                                  className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto_auto] md:items-center"
-                                >
-                                  <div>
-                                    <p className="text-sm font-bold">
-                                      {student?.displayName ?? "Student"}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                      {recipient.status} -{" "}
-                                      {window.attemptLimit} attempt
-                                      {window.attemptLimit === 1 ? "" : "s"}
-                                    </p>
-                                  </div>
-                                  <p className="text-xs font-semibold text-slate-500">
-                                    Due{" "}
-                                    {new Intl.DateTimeFormat("en-US", {
-                                      month: "short",
-                                      day: "numeric",
-                                    }).format(new Date(window.dueAt))}
-                                  </p>
-                                  <div className="flex flex-wrap justify-end gap-2">
+                        {!activeTestAssigned && (
+                          <div className="border-t bg-slate-50 p-4">
+                            <div className="relative">
+                              <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
+                              <Input
+                                className="pl-10"
+                                value={moduleSearch[module.id] ?? ""}
+                                onChange={(event) =>
+                                  setModuleSearch((current) => ({
+                                    ...current,
+                                    [module.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder={`Search published ${module.section} questions`}
+                              />
+                            </div>
+                            <div className="mt-3 overflow-hidden rounded-xl border bg-white">
+                              <div className="max-h-72 overflow-y-auto">
+                                {available.map((question) => (
+                                  <div
+                                    key={question.id}
+                                    className="grid gap-3 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[1fr_auto]"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-bold">
+                                        {question.sourceId} · {question.skill}
+                                      </p>
+                                      <p className="truncate text-xs text-slate-500">
+                                        {question.domain} · {question.difficulty}
+                                      </p>
+                                    </div>
                                     <Button
                                       size="sm"
                                       variant="secondary"
                                       onClick={() =>
-                                        updateRecipient(
-                                          assignment,
-                                          recipient.studentId,
-                                          {
-                                            status: "extended",
-                                            dueAt: shiftDays(window.dueAt, 7),
-                                          },
+                                        addQuestionToModule(
+                                          module.id,
+                                          question.id,
                                         )
                                       }
                                     >
-                                      Extend
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      icon={<RotateCcw className="h-4 w-4" />}
-                                      onClick={() =>
-                                        updateRecipient(
-                                          assignment,
-                                          recipient.studentId,
-                                          {
-                                            attemptLimit:
-                                              window.attemptLimit + 1,
-                                          },
-                                        )
-                                      }
-                                    >
-                                      Retake
+                                      Add
                                     </Button>
                                   </div>
-                                </div>
-                              );
-                            },
-                          )}
-                        </div>
+                                ))}
+                                {!available.length && (
+                                  <p className="p-5 text-center text-sm text-slate-500">
+                                    No available published questions match this
+                                    module.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="mt-8 space-y-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-black">Assignments</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Manage due dates, retakes, and release policy for this
+                      test.
+                    </p>
+                  </div>
+                </div>
+                {activeAssignments.map((assignment) => (
+                  <div key={assignment.id} className="rounded-2xl border p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-black">{assignment.title}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {assignment.studentIds.length} active recipient
+                          {assignment.studentIds.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() =>
+                            updateAssignment(assignment.id, {
+                              dueAt: shiftDays(assignment.dueAt, 7),
+                            })
+                          }
+                        >
+                          Extend all 7 days
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={
+                            assignment.status === "closed"
+                              ? "secondary"
+                              : "danger"
+                          }
+                          onClick={() =>
+                            updateAssignment(assignment.id, {
+                              status:
+                                assignment.status === "closed"
+                                  ? "open"
+                                  : "closed",
+                            })
+                          }
+                        >
+                          {assignment.status === "closed" ? "Reopen" : "Close"}
+                        </Button>
                       </div>
                     </div>
-                  ))}
-                  {!activeAssignments.length && (
-                    <div className="px-5 py-8 text-center text-sm text-slate-500">
-                      Assign this test to students to manage availability,
-                      retakes, and release controls.
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      <div>
+                        <FieldLabel htmlFor={`available-${assignment.id}`}>
+                          Available
+                        </FieldLabel>
+                        <Input
+                          id={`available-${assignment.id}`}
+                          type="datetime-local"
+                          value={toDateTimeLocal(assignment.availableAt)}
+                          onChange={(event) =>
+                            updateAssignment(assignment.id, {
+                              availableAt: fromDateTimeLocal(event.target.value),
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel htmlFor={`due-${assignment.id}`}>
+                          Due
+                        </FieldLabel>
+                        <Input
+                          id={`due-${assignment.id}`}
+                          type="datetime-local"
+                          value={toDateTimeLocal(assignment.dueAt)}
+                          onChange={(event) =>
+                            updateAssignment(assignment.id, {
+                              dueAt: fromDateTimeLocal(event.target.value),
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel htmlFor={`limit-${assignment.id}`}>
+                          Attempts
+                        </FieldLabel>
+                        <Input
+                          id={`limit-${assignment.id}`}
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={assignment.attemptLimit}
+                          onChange={(event) =>
+                            updateAssignment(assignment.id, {
+                              attemptLimit: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel htmlFor={`policy-${assignment.id}`}>
+                          Feedback
+                        </FieldLabel>
+                        <Select
+                          id={`policy-${assignment.id}`}
+                          value={assignment.feedbackPolicy}
+                          onChange={(event) =>
+                            updateAssignment(assignment.id, {
+                              feedbackPolicy:
+                                event.target.value as FeedbackPolicy,
+                            })
+                          }
+                        >
+                          <option value="immediate">Immediate</option>
+                          <option value="after_submission">
+                            After submission
+                          </option>
+                          <option value="tutor_release">Tutor release</option>
+                        </Select>
+                      </div>
+                      <div>
+                        <FieldLabel htmlFor={`status-${assignment.id}`}>
+                          Status
+                        </FieldLabel>
+                        <Select
+                          id={`status-${assignment.id}`}
+                          value={assignment.status}
+                          onChange={(event) =>
+                            updateAssignment(assignment.id, {
+                              status:
+                                event.target.value as Assignment["status"],
+                            })
+                          }
+                        >
+                          <option value="scheduled">Scheduled</option>
+                          <option value="open">Open</option>
+                          <option value="closed">Closed</option>
+                        </Select>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <div className="mt-4 overflow-hidden rounded-xl border">
+                      <div className="grid grid-cols-[1fr_auto_auto] gap-3 bg-slate-50 px-4 py-2 text-xs font-extrabold uppercase tracking-wide text-slate-500">
+                        <span>Student</span>
+                        <span>Window</span>
+                        <span>Actions</span>
+                      </div>
+                      <div className="divide-y">
+                        {getAssignmentRecipients(assignment).map((recipient) => {
+                          const student = state.students.find(
+                            (item) => item.id === recipient.studentId,
+                          );
+                          const window = getEffectiveAssignmentWindow(
+                            assignment,
+                            recipient.studentId,
+                          );
+                          return (
+                            <div
+                              key={recipient.studentId}
+                              className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto_auto] md:items-center"
+                            >
+                              <div>
+                                <p className="text-sm font-bold">
+                                  {student?.displayName ?? "Student"}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {recipient.status} · {window.attemptLimit}{" "}
+                                  attempt
+                                  {window.attemptLimit === 1 ? "" : "s"}
+                                </p>
+                              </div>
+                              <p className="text-xs font-semibold text-slate-500">
+                                Due{" "}
+                                {new Intl.DateTimeFormat("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                }).format(new Date(window.dueAt))}
+                              </p>
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() =>
+                                    updateRecipient(
+                                      assignment,
+                                      recipient.studentId,
+                                      {
+                                        status: "extended",
+                                        dueAt: shiftDays(window.dueAt, 7),
+                                      },
+                                    )
+                                  }
+                                >
+                                  Extend
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon={<RotateCcw className="h-4 w-4" />}
+                                  onClick={() =>
+                                    updateRecipient(
+                                      assignment,
+                                      recipient.studentId,
+                                      {
+                                        attemptLimit: window.attemptLimit + 1,
+                                      },
+                                    )
+                                  }
+                                >
+                                  Retake
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  icon={<Archive className="h-4 w-4" />}
+                                  onClick={() =>
+                                    updateRecipient(
+                                      assignment,
+                                      recipient.studentId,
+                                      { status: "excused" },
+                                    )
+                                  }
+                                >
+                                  Excuse
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {!activeAssignments.length && (
+                  <div className="rounded-2xl border px-5 py-8 text-center text-sm text-slate-500">
+                    Assign this test to students to manage availability,
+                    retakes, and release controls.
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -828,7 +827,7 @@ export default function TestsPage() {
               <Sparkles className="mx-auto h-10 w-10 text-slate-300" />
               <p className="mt-4 font-bold">Choose a test to edit</p>
               <p className="mt-1 text-sm text-slate-500">
-                Or build a new assisted draft from your published questions.
+                Or build a new draft from one of the six SAT work types.
               </p>
             </div>
           </Card>
@@ -838,7 +837,7 @@ export default function TestsPage() {
       <Dialog.Root open={builderOpen} onOpenChange={setBuilderOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
             <Dialog.Close
               aria-label="Close"
               className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
@@ -849,8 +848,8 @@ export default function TestsPage() {
               Build an assisted draft
             </Dialog.Title>
             <Dialog.Description className="mt-1 text-sm leading-6 text-slate-500">
-              The initial modules use available section, skill, and difficulty
-              coverage. You can reorder every question before assigning.
+              Choose the work type first. The app creates fixed module slots;
+              you fill them from the question bank table.
             </Dialog.Description>
             <div className="mt-5 space-y-4">
               <div>
@@ -863,31 +862,67 @@ export default function TestsPage() {
                 />
               </div>
               <div>
-                <FieldLabel htmlFor="test-mode">Mode</FieldLabel>
+                <FieldLabel htmlFor="test-work-type">Work type</FieldLabel>
                 <Select
-                  id="test-mode"
-                  value={mode}
+                  id="test-work-type"
+                  value={workType}
                   onChange={(event) =>
-                    setMode(event.target.value as "practice" | "exam")
+                    setWorkType(event.target.value as WorkType)
                   }
                 >
-                  <option value="practice">Practice set</option>
-                  <option value="exam">Full SAT simulation</option>
+                  {WORK_TYPES.map((item) => (
+                    <option key={item} value={item}>
+                      {WORK_TYPE_CONFIGS[item].label}
+                    </option>
+                  ))}
                 </Select>
+                <p className="mt-2 text-xs font-semibold text-slate-500">
+                  {WORK_TYPE_CONFIGS[workType].description}
+                </p>
               </div>
+              {workType === "custom" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <FieldLabel htmlFor="custom-section">Section</FieldLabel>
+                    <Select
+                      id="custom-section"
+                      value={customSection}
+                      onChange={(event) =>
+                        setCustomSection(event.target.value as Question["section"])
+                      }
+                    >
+                      <option>Math</option>
+                      <option>Reading and Writing</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="custom-duration">Minutes</FieldLabel>
+                    <Input
+                      id="custom-duration"
+                      type="number"
+                      min={1}
+                      max={240}
+                      value={customDuration}
+                      onChange={(event) =>
+                        setCustomDuration(Number(event.target.value))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
               <div className="rounded-xl bg-blue-50 p-4 text-sm leading-6 text-blue-900">
                 <strong>{publishedQuestions.length}</strong> published questions
-                are available. A full SAT requires 98 question placements plus
-                adaptive Module 2 branches.
+                are available. Strict templates cannot be assigned until every
+                module reaches its exact count.
               </div>
             </div>
             <Button
               className="mt-6 w-full"
               icon={<Sparkles className="h-4 w-4" />}
-              disabled={!title.trim() || !publishedQuestions.length}
+              disabled={!title.trim()}
               onClick={buildDraft}
             >
-              Generate draft
+              Create module slots
             </Button>
           </Dialog.Content>
         </Dialog.Portal>
@@ -987,7 +1022,7 @@ export default function TestsPage() {
                           @{student.username}
                         </p>
                       </div>
-                      <Badge>{student.timeMultiplier}× time</Badge>
+                      <Badge>{student.timeMultiplier}x time</Badge>
                     </label>
                   );
                 })}
@@ -999,9 +1034,7 @@ export default function TestsPage() {
               </div>
             </div>
             <div className="mt-4">
-              <FieldLabel htmlFor="feedback-release">
-                Feedback release
-              </FieldLabel>
+              <FieldLabel htmlFor="feedback-release">Feedback release</FieldLabel>
               <Select
                 id="feedback-release"
                 value={feedbackPolicy}
@@ -1017,7 +1050,7 @@ export default function TestsPage() {
             <Button
               className="mt-6 w-full"
               icon={<Check className="h-4 w-4" />}
-              disabled={!selectedStudentIds.length}
+              disabled={!selectedStudentIds.length || !validation.valid}
               onClick={assignTest}
             >
               Publish to {selectedStudentIds.length} student

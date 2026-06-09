@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { ScoreSectionSummary, ScoreSummary, Section } from "@/lib/domain";
 import { normalizeSprAnswer } from "@/lib/scoring";
 import {
   requireStudentSession,
@@ -21,6 +22,18 @@ const submitSchema = z.object({
   online: z.boolean(),
   responses: z.array(responseSchema).max(200),
 });
+
+function estimateSectionScore(accuracy: number) {
+  const midpoint = Math.round((200 + 600 * accuracy) / 10) * 10;
+  const estimatedScore = Math.min(800, Math.max(200, midpoint));
+  return {
+    estimatedScore,
+    estimatedScoreRange: [
+      Math.max(200, estimatedScore - 30),
+      Math.min(800, estimatedScore + 30),
+    ] as [number, number],
+  };
+}
 
 export async function POST(request: Request) {
   const session = await requireStudentSession();
@@ -56,7 +69,7 @@ export async function POST(request: Request) {
   }
   const { data: modules, error: modulesError } = await admin
     .from("test_modules")
-    .select("id")
+    .select("id,section")
     .eq("test_id", assignment.test_id);
   if (modulesError) {
     return NextResponse.json({ error: modulesError.message }, { status: 500 });
@@ -65,7 +78,7 @@ export async function POST(request: Request) {
   const { data: placements, error: placementsError } = moduleIds.length
     ? await admin
         .from("module_questions")
-        .select("question_id,unscored")
+        .select("module_id,question_id,unscored")
         .in("module_id", moduleIds)
     : { data: [], error: null };
   if (placementsError) {
@@ -75,6 +88,18 @@ export async function POST(request: Request) {
     (placements ?? []).map((placement) => [
       placement.question_id,
       placement.unscored,
+    ]),
+  );
+  const moduleSectionMap = new Map(
+    (modules ?? []).map((testModule) => [
+      testModule.id,
+      testModule.section as Section,
+    ]),
+  );
+  const questionSectionMap = new Map(
+    (placements ?? []).map((placement) => [
+      placement.question_id,
+      moduleSectionMap.get(placement.module_id) ?? "Math",
     ]),
   );
   const questionIds = [...placementMap.keys()];
@@ -121,9 +146,16 @@ export async function POST(request: Request) {
   );
   let correct = 0;
   let total = 0;
+  const sectionStats = new Map<
+    Section,
+    { rawCorrect: number; rawTotal: number }
+  >();
   for (const questionId of questionIds) {
     if (placementMap.get(questionId)) continue;
     total += 1;
+    const section = questionSectionMap.get(questionId) ?? "Math";
+    const stats = sectionStats.get(section) ?? { rawCorrect: 0, rawTotal: 0 };
+    stats.rawTotal += 1;
     const versionId = questionVersionMap.get(questionId);
     const responseType = responseTypeMap.get(versionId);
     const accepted = (answers ?? []).filter(
@@ -139,7 +171,47 @@ export async function POST(request: Request) {
             (answer) => answer.normalized_value === normalizeSprAnswer(value),
           );
     if (isCorrect) correct += 1;
+    if (isCorrect) stats.rawCorrect += 1;
+    sectionStats.set(section, stats);
   }
+
+  const sections: ScoreSectionSummary[] = Array.from(sectionStats.entries()).map(
+    ([section, stats]) => {
+      const accuracy = stats.rawTotal ? stats.rawCorrect / stats.rawTotal : 0;
+      return {
+        section,
+        rawCorrect: stats.rawCorrect,
+        rawTotal: stats.rawTotal,
+        accuracy,
+        ...estimateSectionScore(accuracy),
+      };
+    },
+  );
+  const hasBothSections =
+    sections.some((section) => section.section === "Reading and Writing") &&
+    sections.some((section) => section.section === "Math");
+  const scoreSummary: ScoreSummary = {
+    rawCorrect: correct,
+    rawTotal: total,
+    accuracy: total ? correct / total : 0,
+    estimatedScoreRange: hasBothSections
+      ? [
+          sections.reduce(
+            (sum, section) => sum + section.estimatedScoreRange[0],
+            0,
+          ),
+          sections.reduce(
+            (sum, section) => sum + section.estimatedScoreRange[1],
+            0,
+          ),
+        ]
+      : sections[0]?.estimatedScoreRange,
+    estimatedScore: hasBothSections
+      ? sections.reduce((sum, section) => sum + section.estimatedScore, 0)
+      : sections[0]?.estimatedScore,
+    sections,
+    label: "Unofficial tutor-estimated SAT range",
+  };
 
   if (parsed.data.responses.length) {
     const { error: responseError } = await admin.from("responses").upsert(
@@ -175,6 +247,7 @@ export async function POST(request: Request) {
       last_heartbeat_at: now.toISOString(),
       raw_correct: correct,
       raw_total: total,
+      score_summary: scoreSummary,
       expired_while_offline: expired && !parsed.data.online,
       released,
     })
@@ -187,6 +260,6 @@ export async function POST(request: Request) {
     status: expired ? "expired" : "submitted",
     submittedAt: now.toISOString(),
     released,
-    ...(released ? { rawCorrect: correct, rawTotal: total } : {}),
+    ...(released ? { rawCorrect: correct, rawTotal: total, scoreSummary } : {}),
   });
 }

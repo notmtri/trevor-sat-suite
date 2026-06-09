@@ -76,6 +76,7 @@ describe("question library helpers", () => {
           title: "Test",
           description: "",
           mode: "practice",
+          workType: "custom",
           status: "draft",
           routingThreshold: 0.6,
           createdAt: "2026-06-08T00:00:00.000Z",

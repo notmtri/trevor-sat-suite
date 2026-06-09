@@ -3,8 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  BookOpenCheck,
   Archive,
+  ArrowLeft,
+  ArrowRight,
+  BookOpenCheck,
   CheckCircle2,
   Filter,
   ImagePlus,
@@ -27,6 +29,16 @@ import {
   questionUsage,
 } from "@/lib/question-library";
 
+const PAGE_SIZE = 50;
+
+type SortKey = "sourceId" | "section" | "skill" | "difficulty" | "status";
+
+function statusTone(status: Question["status"]) {
+  if (status === "published") return "green";
+  if (status === "archived") return "rose";
+  return "amber";
+}
+
 export default function QuestionLibraryPage() {
   const router = useRouter();
   const { state, updateQuestion, deleteQuestion } = useAppState();
@@ -35,11 +47,14 @@ export default function QuestionLibraryPage() {
   const [difficulty, setDifficulty] = useState("all");
   const [status, setStatus] = useState("all");
   const [tag, setTag] = useState("all");
+  const [sortKey, setSortKey] = useState<SortKey>("sourceId");
+  const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selected, setSelected] = useState<Question | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [bulkMessage, setBulkMessage] = useState("");
 
   const tags = useMemo(() => allQuestionTags(state.questions), [state.questions]);
   const filtered = useMemo(
@@ -50,10 +65,48 @@ export default function QuestionLibraryPage() {
         difficulty,
         status,
         tag,
+      }).sort((a, b) => {
+        const left = String(a[sortKey] ?? "").toLowerCase();
+        const right = String(b[sortKey] ?? "").toLowerCase();
+        return left.localeCompare(right);
       }),
-    [state.questions, search, section, difficulty, status, tag],
+    [state.questions, search, section, difficulty, status, tag, sortKey],
+  );
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedQuestions = filtered.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
   );
   const selectedUsage = selected ? questionUsage(state, selected.id) : null;
+  const selectedSafeCount = selectedIds.filter(
+    (questionId) => questionUsage(state, questionId).safeToDelete,
+  ).length;
+
+  function resetPaging() {
+    setPage(1);
+    setBulkMessage("");
+  }
+
+  function toggleSelected(questionId: string) {
+    setBulkMessage("");
+    setSelectedIds((current) =>
+      current.includes(questionId)
+        ? current.filter((id) => id !== questionId)
+        : [...current, questionId],
+    );
+  }
+
+  function selectPage() {
+    const pageIds = pagedQuestions.map((question) => question.id);
+    const allSelected = pageIds.every((id) => selectedIds.includes(id));
+    setSelectedIds((current) =>
+      allSelected
+        ? current.filter((id) => !pageIds.includes(id))
+        : [...new Set([...current, ...pageIds])],
+    );
+    setBulkMessage("");
+  }
 
   async function removeSelectedQuestion() {
     if (!selected) return;
@@ -63,6 +116,7 @@ export default function QuestionLibraryPage() {
       await deleteQuestion(selected.id);
       setDeleteOpen(false);
       setSelected(null);
+      setBulkMessage("Deleted 1 unused question.");
     } catch (error) {
       setDeleteError(
         error instanceof Error
@@ -74,28 +128,29 @@ export default function QuestionLibraryPage() {
     }
   }
 
-  function toggleSelected(questionId: string) {
-    setSelectedIds((current) =>
-      current.includes(questionId)
-        ? current.filter((id) => id !== questionId)
-        : [...current, questionId],
-    );
-  }
-
-  async function deleteSelectedQuestions() {
+  async function deleteUnusedSelection() {
     const safeIds = selectedIds.filter(
       (questionId) => questionUsage(state, questionId).safeToDelete,
     );
+    let deleted = 0;
     for (const questionId of safeIds) {
       await deleteQuestion(questionId);
+      deleted += 1;
     }
+    const skipped = selectedIds.length - deleted;
     setSelectedIds([]);
+    setBulkMessage(
+      `${deleted} unused question${deleted === 1 ? "" : "s"} deleted. ${skipped} used question${skipped === 1 ? "" : "s"} skipped; archive them instead.`,
+    );
   }
 
   function bulkUpdateStatus(nextStatus: Question["status"]) {
     for (const questionId of selectedIds) {
       updateQuestion(questionId, { status: nextStatus });
     }
+    setBulkMessage(
+      `${selectedIds.length} question${selectedIds.length === 1 ? "" : "s"} marked ${nextStatus}.`,
+    );
     setSelectedIds([]);
   }
 
@@ -110,7 +165,7 @@ export default function QuestionLibraryPage() {
       <PageHeader
         eyebrow="Content"
         title="Question library"
-        description="Search, review, and organize the exact-image questions available for tests and practice."
+        description="Search, review, and organize questions at table scale. Images load only when you open a question."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
@@ -135,19 +190,25 @@ export default function QuestionLibraryPage() {
       />
 
       <Card className="mb-5 p-4">
-        <div className="grid gap-3 xl:grid-cols-[minmax(240px,1fr)_200px_160px_160px_180px]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(240px,1fr)_200px_160px_160px_180px_180px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
             <Input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search ID, domain, skill, or extracted text"
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetPaging();
+              }}
+              placeholder="Search ID, domain, skill, tags, or text"
               className="pl-10"
             />
           </div>
           <Select
             value={section}
-            onChange={(event) => setSection(event.target.value)}
+            onChange={(event) => {
+              setSection(event.target.value);
+              resetPaging();
+            }}
           >
             <option value="all">All sections</option>
             <option>Math</option>
@@ -155,7 +216,10 @@ export default function QuestionLibraryPage() {
           </Select>
           <Select
             value={difficulty}
-            onChange={(event) => setDifficulty(event.target.value)}
+            onChange={(event) => {
+              setDifficulty(event.target.value);
+              resetPaging();
+            }}
           >
             <option value="all">All difficulties</option>
             <option>Easy</option>
@@ -164,7 +228,10 @@ export default function QuestionLibraryPage() {
           </Select>
           <Select
             value={status}
-            onChange={(event) => setStatus(event.target.value)}
+            onChange={(event) => {
+              setStatus(event.target.value);
+              resetPaging();
+            }}
           >
             <option value="all">All statuses</option>
             <option value="published">Published</option>
@@ -172,122 +239,247 @@ export default function QuestionLibraryPage() {
             <option value="rejected">Rejected</option>
             <option value="archived">Archived</option>
           </Select>
-          <Select value={tag} onChange={(event) => setTag(event.target.value)}>
+          <Select
+            value={tag}
+            onChange={(event) => {
+              setTag(event.target.value);
+              resetPaging();
+            }}
+          >
             <option value="all">All tags</option>
             {tags.map((item) => (
               <option key={item}>{item}</option>
             ))}
           </Select>
+          <Select
+            value={sortKey}
+            onChange={(event) => setSortKey(event.target.value as SortKey)}
+            aria-label="Sort questions"
+          >
+            <option value="sourceId">Sort by ID</option>
+            <option value="section">Sort by section</option>
+            <option value="skill">Sort by skill</option>
+            <option value="difficulty">Sort by difficulty</option>
+            <option value="status">Sort by status</option>
+          </Select>
         </div>
       </Card>
 
-      {selectedIds.length > 0 && (
+      {(selectedIds.length > 0 || bulkMessage) && (
         <Card className="mb-5 flex flex-wrap items-center justify-between gap-3 p-4">
-          <p className="text-sm font-bold text-slate-600">
-            {selectedIds.length} selected
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => bulkUpdateStatus("published")}
-            >
-              Publish
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Archive className="h-4 w-4" />}
-              onClick={() => bulkUpdateStatus("archived")}
-            >
-              Archive
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              icon={<Trash2 className="h-4 w-4" />}
-              onClick={() => void deleteSelectedQuestions()}
-            >
-              Delete safe
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setSelectedIds([])}
-            >
-              Clear
-            </Button>
+          <div>
+            <p className="text-sm font-bold text-slate-600">
+              {selectedIds.length
+                ? `${selectedIds.length} selected (${selectedSafeCount} unused)`
+                : "Bulk action complete"}
+            </p>
+            {bulkMessage && (
+              <p className="mt-1 text-sm font-semibold text-slate-500">
+                {bulkMessage}
+              </p>
+            )}
           </div>
+          {selectedIds.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => bulkUpdateStatus("published")}
+              >
+                Publish
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Archive className="h-4 w-4" />}
+                onClick={() => bulkUpdateStatus("archived")}
+              >
+                Archive
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                icon={<Trash2 className="h-4 w-4" />}
+                disabled={selectedSafeCount === 0}
+                onClick={() => void deleteUnusedSelection()}
+              >
+                Delete unused
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds([])}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm font-bold text-slate-600">
-          {filtered.length} question{filtered.length === 1 ? "" : "s"}
+          {filtered.length} question{filtered.length === 1 ? "" : "s"} · showing{" "}
+          {pagedQuestions.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0}-
+          {(currentPage - 1) * PAGE_SIZE + pagedQuestions.length}
         </p>
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
-          <Filter className="h-3.5 w-3.5" /> Drafts are excluded from student tests
+          <Filter className="h-3.5 w-3.5" /> Archived questions stay out of new
+          test building unless you republish them.
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-        {filtered.map((question) => (
-          <Card
-            key={question.id}
-            className="group relative overflow-hidden transition hover:-translate-y-0.5 hover:shadow-lg"
-          >
-            <label className="absolute right-3 top-3 z-10 rounded-lg bg-white/95 px-2 py-1 text-xs font-bold shadow-sm">
-              <input
-                type="checkbox"
-                checked={selectedIds.includes(question.id)}
-                onChange={() => toggleSelected(question.id)}
-                className="mr-1.5 h-3.5 w-3.5 accent-[var(--navy)]"
-                aria-label={`Select ${question.sourceId}`}
-              />
-              Select
-            </label>
-            <button
-              type="button"
-              className="block w-full text-left"
-              onClick={() => setSelected(question)}
-            >
-              <div className="h-52 overflow-hidden bg-slate-100 p-4">
-                {question.promptAssets[0] ? (
-                  <QuestionAssetImage
-                    asset={question.promptAssets[0]}
-                    alt={`Question ${question.sourceId}`}
-                    className="rounded-lg border bg-white"
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left">
+            <thead className="border-b bg-slate-50 text-xs font-extrabold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="w-12 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={
+                      pagedQuestions.length > 0 &&
+                      pagedQuestions.every((question) =>
+                        selectedIds.includes(question.id),
+                      )
+                    }
+                    onChange={selectPage}
+                    aria-label="Select page"
+                    className="h-4 w-4 accent-[var(--navy)]"
                   />
-                ) : (
-                  <div className="grid h-full place-items-center text-slate-400">
-                    <BookOpenCheck className="h-8 w-8" />
-                  </div>
-                )}
-              </div>
-              <div className="p-5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-black text-[var(--navy)]">
-                    {question.sourceId}
-                  </span>
-                  <Badge
-                    tone={question.status === "published" ? "green" : "amber"}
+                </th>
+                <th className="px-4 py-3">Question</th>
+                <th className="px-4 py-3">Section</th>
+                <th className="px-4 py-3">Skill</th>
+                <th className="px-4 py-3">Difficulty</th>
+                <th className="px-4 py-3">Usage</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {pagedQuestions.map((question) => {
+                const usage = questionUsage(state, question.id);
+                return (
+                  <tr key={question.id} className="hover:bg-slate-50/70">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(question.id)}
+                        onChange={() => toggleSelected(question.id)}
+                        aria-label={`Select ${question.sourceId}`}
+                        className="h-4 w-4 accent-[var(--navy)]"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        className="text-left"
+                        onClick={() => setSelected(question)}
+                      >
+                        <span className="font-black text-[var(--navy)]">
+                          {question.sourceId}
+                        </span>
+                        <span className="mt-1 block max-w-80 truncate text-xs font-semibold text-slate-500">
+                          {question.domain}
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone="blue">{question.section}</Badge>
+                    </td>
+                    <td className="max-w-xs px-4 py-3">
+                      <p className="truncate text-sm font-bold">
+                        {question.skill}
+                      </p>
+                      <p className="truncate text-xs text-slate-500">
+                        {(question.tags ?? []).join(", ") || "No tags"}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge>{question.difficulty}</Badge>
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold text-slate-500">
+                      {usage.testCount || usage.responseCount ? (
+                        <>
+                          {usage.testCount} test
+                          {usage.testCount === 1 ? "" : "s"} ·{" "}
+                          {usage.responseCount} response
+                          {usage.responseCount === 1 ? "" : "s"}
+                        </>
+                      ) : (
+                        "Unused"
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone={statusTone(question.status)}>
+                        {question.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setSelected(question)}
+                        >
+                          Preview
+                        </Button>
+                        {question.status !== "archived" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={<Archive className="h-4 w-4" />}
+                            onClick={() =>
+                              updateQuestion(question.id, { status: "archived" })
+                            }
+                          >
+                            Archive
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!pagedQuestions.length && (
+                <tr>
+                  <td
+                    colSpan={8}
+                    className="px-6 py-12 text-center text-sm text-slate-500"
                   >
-                    {question.status}
-                  </Badge>
-                </div>
-                <p className="mt-3 text-sm font-extrabold">{question.skill}</p>
-                <p className="mt-1 text-xs text-slate-500">{question.domain}</p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Badge tone="blue">{question.section}</Badge>
-                  <Badge>{question.difficulty}</Badge>
-                  <Badge>
-                    {question.responseType === "multiple_choice" ? "A-D" : "SPR"}
-                  </Badge>
-                </div>
-              </div>
-            </button>
-          </Card>
-        ))}
+                    No questions match these filters.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-slate-500">
+          Page {currentPage} of {pageCount}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<ArrowLeft className="h-4 w-4" />}
+            disabled={currentPage === 1}
+            onClick={() => setPage((value) => Math.max(1, value - 1))}
+          >
+            Previous
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={currentPage === pageCount}
+            onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+          >
+            Next <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <Dialog.Root
@@ -298,7 +490,7 @@ export default function QuestionLibraryPage() {
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
           <Dialog.Content className="fixed inset-x-3 top-1/2 z-50 mx-auto max-h-[92vh] max-w-5xl -translate-y-1/2 overflow-hidden rounded-2xl border bg-white shadow-2xl">
             {selected && (
-              <div className="grid max-h-[92vh] md:grid-cols-[1fr_290px]">
+              <div className="grid max-h-[92vh] md:grid-cols-[1fr_310px]">
                 <div className="scrollbar-thin overflow-y-auto bg-slate-100 p-5">
                   <p className="mb-3 text-xs font-extrabold uppercase tracking-wider text-slate-500">
                     Student prompt
@@ -312,6 +504,11 @@ export default function QuestionLibraryPage() {
                         />
                       </div>
                     ))}
+                    {!selected.promptAssets.length && (
+                      <div className="grid min-h-56 place-items-center rounded-xl border bg-white text-slate-400">
+                        <BookOpenCheck className="h-8 w-8" />
+                      </div>
+                    )}
                   </div>
                   <p className="mb-3 mt-7 text-xs font-extrabold uppercase tracking-wider text-slate-500">
                     Rationale
@@ -334,7 +531,21 @@ export default function QuestionLibraryPage() {
                   <Dialog.Description className="mt-1 text-sm text-slate-500">
                     {selected.sourceFileName}
                   </Dialog.Description>
-                  <div className="mt-6 space-y-4 text-sm">
+                  <div className="mt-5 rounded-xl bg-slate-50 p-3 text-xs font-semibold text-slate-600">
+                    {selectedUsage?.safeToDelete ? (
+                      "Unused. This question can be permanently deleted."
+                    ) : (
+                      <>
+                        Used in {selectedUsage?.testCount} test
+                        {selectedUsage?.testCount === 1 ? "" : "s"} and{" "}
+                        {selectedUsage?.responseCount} response
+                        {selectedUsage?.responseCount === 1 ? "" : "s"}. Archive
+                        it to hide it from new tests. Remove it from tests before
+                        deleting it. Remove it from those tests before deleting it.
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-5 space-y-4 text-sm">
                     <div>
                       <FieldLabel htmlFor="selected-section">Section</FieldLabel>
                       <Select
@@ -441,13 +652,6 @@ export default function QuestionLibraryPage() {
                       >
                         Archive question
                       </Button>
-                    )}
-                    {(selectedUsage?.testCount ?? 0) > 0 && (
-                      <p className="rounded-xl bg-amber-50 p-3 text-xs font-semibold leading-5 text-amber-800">
-                        Used in {selectedUsage?.testCount} test
-                        {selectedUsage?.testCount === 1 ? "" : "s"}. Remove it
-                        from those tests before deleting it.
-                      </p>
                     )}
                     <Button
                       variant="danger"

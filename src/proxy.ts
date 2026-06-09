@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isDemoMode } from "@/lib/runtime-config";
+import {
+  getSupabaseBrowserConfig,
+  isDemoMode,
+} from "@/lib/runtime-config";
 
 export async function proxy(request: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { url, key } = getSupabaseBrowserConfig();
   if (isDemoMode()) return NextResponse.next();
   if (!url || !key) {
     return NextResponse.redirect(new URL("/setup-required", request.url));

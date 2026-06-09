@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import type { Assignment, Attempt, Question } from "@/lib/domain";
 import { buildAttemptReview, reportForAttempt } from "@/lib/reports";
 import { formatDuration } from "@/lib/utils";
+import { buildScoreSummary } from "@/lib/work-types";
 
 function orderedQuestionsForAttempt(
   assignment: Assignment | undefined,
@@ -65,21 +66,26 @@ export default function StudentResultsPage() {
           const assignment = state.assignments.find(
             (item) => item.id === attempt.assignmentId,
           );
+          const test = state.tests.find((item) => item.id === assignment?.testId);
           const report = reportForAttempt(state.releasedReports, attempt.id);
+          const orderedQuestions = orderedQuestionsForAttempt(
+            assignment,
+            attempt,
+            state.questions,
+            state.tests,
+          );
           const review = buildAttemptReview(
             attempt,
-            orderedQuestionsForAttempt(
-              assignment,
-              attempt,
-              state.questions,
-              state.tests,
-            ),
+            orderedQuestions,
             report,
           );
+          const scoreSummary =
+            attempt.scoreSummary ??
+            buildScoreSummary(test, orderedQuestions, attempt.responses);
           const accuracy = review.accuracy;
           return (
             <Card key={attempt.id} className="overflow-hidden">
-              <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto_auto] md:items-center">
+              <div className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_auto_auto_auto] md:items-center">
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="font-black">
@@ -111,6 +117,19 @@ export default function StudentResultsPage() {
                   <p className="mt-1 text-xl font-black">
                     {attempt.rawCorrect ?? review.correct} /{" "}
                     {attempt.rawTotal ?? review.total}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Estimated SAT
+                  </p>
+                  <p className="mt-1 text-xl font-black">
+                    {scoreSummary.estimatedScoreRange
+                      ? `${scoreSummary.estimatedScoreRange[0]}-${scoreSummary.estimatedScoreRange[1]}`
+                      : "N/A"}
+                  </p>
+                  <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                    Unofficial
                   </p>
                 </div>
               </div>

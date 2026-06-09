@@ -5,7 +5,6 @@ if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 
 const required = [
   "NEXT_PUBLIC_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
   "NEXT_PUBLIC_DESMOS_API_KEY",
   "NEXT_PUBLIC_APP_URL",
@@ -14,6 +13,14 @@ const errors = [];
 
 for (const name of required) {
   if (!process.env[name]?.trim()) errors.push(`${name} is missing.`);
+}
+const publicSupabaseKey =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+if (!publicSupabaseKey?.trim()) {
+  errors.push(
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY is missing.",
+  );
 }
 if (process.env.NEXT_PUBLIC_DEMO_MODE !== "false") {
   errors.push("NEXT_PUBLIC_DEMO_MODE must be false.");
@@ -28,12 +35,8 @@ for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_APP_URL"]) {
     errors.push(`${name} must be a valid URL.`);
   }
 }
-if (
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ===
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-) {
-  errors.push("The anon key and service-role key must be different.");
+if (publicSupabaseKey && publicSupabaseKey === process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  errors.push("The public Supabase key and service-role key must be different.");
 }
 
 if (errors.length) {

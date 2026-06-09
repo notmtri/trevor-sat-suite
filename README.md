@@ -60,7 +60,8 @@ GitHub Actions for unit, build, Chromium, and WebKit coverage.
 | --- | --- | --- |
 | `NEXT_PUBLIC_DEMO_MODE` | Browser | Must be `false` in production |
 | `NEXT_PUBLIC_SUPABASE_URL` | Browser | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser | Supabase anonymous key |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser | Supabase publishable key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser | Legacy fallback for older Supabase projects |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server only | Account administration and trusted scoring |
 | `NEXT_PUBLIC_DESMOS_API_KEY` | Browser | Desmos API access |
 | `NEXT_PUBLIC_APP_URL` | Browser | Canonical HTTPS application URL |

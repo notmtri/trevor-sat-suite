@@ -33,7 +33,7 @@
     "@radix-ui/react-toast": "^1.2.16",
     "@radix-ui/react-tooltip": "^1.2.9",
     "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.107.0",
+    "@supabase/supabase-js": "^2.108.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "idb-keyval": "^6.2.5",
@@ -47,6 +47,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@emnapi/core": "^1.11.0",
+    "@emnapi/runtime": "^1.11.0",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",

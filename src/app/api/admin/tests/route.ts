@@ -2,11 +2,21 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+const workTypeSchema = z.enum([
+  "custom",
+  "full_length",
+  "verbal_simulation",
+  "math_simulation",
+  "verbal_practice",
+  "math_practice",
+]);
+
 const testSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1).max(160),
   description: z.string().max(1000),
   mode: z.enum(["practice", "exam"]),
+  workType: workTypeSchema.default("custom"),
   status: z.enum(["draft", "published"]),
   routingThreshold: z.number().min(0).max(1),
   createdAt: z.string().datetime(),
@@ -81,6 +91,7 @@ export async function POST(request: Request) {
     title: test.title,
     description: test.description,
     mode: test.mode,
+    work_type: test.workType,
     status: test.status,
     routing_threshold: test.routingThreshold,
     created_at: test.createdAt,

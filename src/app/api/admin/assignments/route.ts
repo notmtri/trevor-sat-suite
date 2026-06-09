@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { TestDefinition, TestModule, WorkType } from "@/lib/domain";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { validateTestForAssignment } from "@/lib/work-types";
 
 export const dynamic = "force-dynamic";
+
+type SupabaseServerClient = NonNullable<
+  Awaited<ReturnType<typeof createSupabaseServerClient>>
+>;
 
 const recipientSchema = z.object({
   studentId: z.string().uuid(),
@@ -61,6 +67,80 @@ const assignmentUpdateSchema = z
     { message: "No assignment changes were provided." },
   );
 
+function parseWorkType(value: unknown, mode: TestDefinition["mode"]): WorkType {
+  return value === "custom" ||
+    value === "full_length" ||
+    value === "verbal_simulation" ||
+    value === "math_simulation" ||
+    value === "verbal_practice" ||
+    value === "math_practice"
+    ? value
+    : mode === "exam"
+      ? "full_length"
+      : "custom";
+}
+
+async function loadOwnedTest(
+  supabase: SupabaseServerClient,
+  ownerId: string,
+  testId: string,
+) {
+  const { data: test, error: testError } = await supabase
+    .from("tests")
+    .select("*")
+    .eq("id", testId)
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+  if (testError) throw testError;
+  if (!test) return null;
+
+  const { data: modules, error: modulesError } = await supabase
+    .from("test_modules")
+    .select("*")
+    .eq("test_id", testId)
+    .order("module_order");
+  if (modulesError) throw modulesError;
+
+  const moduleIds = (modules ?? []).map((module) => module.id as string);
+  const { data: placements, error: placementsError } = moduleIds.length
+    ? await supabase
+        .from("module_questions")
+        .select("*")
+        .in("module_id", moduleIds)
+        .order("question_order")
+    : { data: [], error: null };
+  if (placementsError) throw placementsError;
+
+  const testMode = test.mode as TestDefinition["mode"];
+  const mappedModules: TestModule[] = (modules ?? []).map((module) => ({
+    id: module.id as string,
+    title: module.title as string,
+    section: module.section as TestModule["section"],
+    durationMinutes: Number(module.duration_minutes),
+    route: module.route as TestModule["route"],
+    order: Number(module.module_order),
+    questions: (placements ?? [])
+      .filter((placement) => placement.module_id === module.id)
+      .map((placement) => ({
+        questionId: placement.question_id as string,
+        order: Number(placement.question_order),
+        unscored: Boolean(placement.unscored),
+      })),
+  }));
+
+  return {
+    id: test.id as string,
+    title: test.title as string,
+    description: (test.description as string) ?? "",
+    mode: testMode,
+    workType: parseWorkType(test.work_type, testMode),
+    status: test.status as TestDefinition["status"],
+    routingThreshold: Number(test.routing_threshold ?? 0.6),
+    createdAt: test.created_at as string,
+    modules: mappedModules,
+  } satisfies TestDefinition;
+}
+
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   if (!supabase) {
@@ -85,17 +165,24 @@ export async function POST(request: Request) {
     );
   }
   const assignment = parsed.data;
-  const { data: test, error: testError } = await supabase
-    .from("tests")
-    .select("id")
-    .eq("id", assignment.testId)
-    .eq("owner_id", user.id)
-    .maybeSingle();
-  if (testError) {
-    return NextResponse.json({ error: testError.message }, { status: 500 });
+  let test: TestDefinition | null;
+  try {
+    test = await loadOwnedTest(supabase, user.id, assignment.testId);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Test lookup failed." },
+      { status: 500 },
+    );
   }
   if (!test) {
     return NextResponse.json({ error: "Test not found." }, { status: 404 });
+  }
+  const validation = validateTestForAssignment(test);
+  if (!validation.valid) {
+    return NextResponse.json(
+      { error: validation.errors.join(" ") },
+      { status: 400 },
+    );
   }
   const { data: students, error: studentsError } = await supabase
     .from("students")

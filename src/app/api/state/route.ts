@@ -6,8 +6,10 @@ import type {
   Attempt,
   Question,
   ReleasedReport,
+  ScoreSummary,
   Student,
   TestDefinition,
+  WorkType,
 } from "@/lib/domain";
 import { normalizeTutorSettings } from "@/lib/settings";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -35,6 +37,26 @@ function parseScoreRange(value: unknown): [number, number] | undefined {
   const match = value.match(/^[[(](\d+),(\d+)[)\]]$/);
   if (!match) return undefined;
   return [Number(match[1]), Number(match[2])];
+}
+
+function parseScoreSummary(value: unknown): ScoreSummary | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return value as ScoreSummary;
+}
+
+function parseWorkType(value: unknown, mode: TestDefinition["mode"]): WorkType {
+  const workType = text(value);
+  if (
+    workType === "custom" ||
+    workType === "full_length" ||
+    workType === "verbal_simulation" ||
+    workType === "math_simulation" ||
+    workType === "verbal_practice" ||
+    workType === "math_practice"
+  ) {
+    return workType;
+  }
+  return mode === "exam" ? "full_length" : "custom";
 }
 
 export async function GET() {
@@ -379,6 +401,7 @@ export async function GET() {
     title: text(test.title),
     description: text(test.description),
     mode: text(test.mode) as TestDefinition["mode"],
+    workType: parseWorkType(test.work_type, text(test.mode) as TestDefinition["mode"]),
     status: text(test.status) as TestDefinition["status"],
     routingThreshold: number(test.routing_threshold, 0.6),
     createdAt: text(test.created_at),
@@ -492,6 +515,7 @@ export async function GET() {
           ? undefined
           : number(attempt.estimated_score),
       scoreRange: parseScoreRange(attempt.score_range),
+      scoreSummary: parseScoreSummary(attempt.score_summary),
       released: Boolean(attempt.released),
     };
   });

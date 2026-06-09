@@ -4,6 +4,13 @@ export type ResponseType = "multiple_choice" | "student_produced";
 export type QuestionStatus = "draft" | "published" | "rejected" | "archived";
 export type FeedbackPolicy = "immediate" | "after_submission" | "tutor_release";
 export type TestMode = "practice" | "exam";
+export type WorkType =
+  | "custom"
+  | "full_length"
+  | "verbal_simulation"
+  | "math_simulation"
+  | "verbal_practice"
+  | "math_practice";
 
 export type QuestionAsset = {
   id: string;
@@ -79,6 +86,7 @@ export type TestDefinition = {
   title: string;
   description: string;
   mode: TestMode;
+  workType: WorkType;
   status: "draft" | "published";
   modules: TestModule[];
   routingThreshold: number;
@@ -117,6 +125,25 @@ export type ResponseRecord = {
   changedCount: number;
 };
 
+export type ScoreSectionSummary = {
+  section: Section;
+  rawCorrect: number;
+  rawTotal: number;
+  accuracy: number;
+  estimatedScoreRange: [number, number];
+  estimatedScore: number;
+};
+
+export type ScoreSummary = {
+  rawCorrect: number;
+  rawTotal: number;
+  accuracy: number;
+  estimatedScoreRange?: [number, number];
+  estimatedScore?: number;
+  sections: ScoreSectionSummary[];
+  label: string;
+};
+
 export type Attempt = {
   id: string;
   assignmentId: string;
@@ -137,6 +164,7 @@ export type Attempt = {
   rawTotal?: number;
   estimatedScore?: number;
   scoreRange?: [number, number];
+  scoreSummary?: ScoreSummary;
   released: boolean;
 };
 

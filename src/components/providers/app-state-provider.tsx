@@ -55,7 +55,11 @@ function normalizeAppState(state: Partial<AppState>): AppState {
     settings: normalizeTutorSettings(state.settings),
     questions: state.questions ?? [],
     students: state.students ?? [],
-    tests: state.tests ?? [],
+    tests: (state.tests ?? []).map((test) => ({
+      ...test,
+      workType:
+        test.workType ?? (test.mode === "exam" ? "full_length" : "custom"),
+    })),
     assignments: state.assignments ?? [],
     attempts: state.attempts ?? [],
     releasedReports: state.releasedReports ?? [],
@@ -102,13 +106,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const persist = useCallback(
     (operation: () => Promise<void>) => {
       if (demo || !isSupabaseConfigured()) return;
-      void operation().catch((error) => {
+      void operation().catch(async (error) => {
         setLoadError(
           error instanceof Error ? error.message : "A change could not be saved.",
         );
+        if (!shouldLoadRemote) return;
+        const response = await fetch("/api/state", { cache: "no-store" }).catch(
+          () => null,
+        );
+        if (!response?.ok) return;
+        const payload = (await response.json().catch(() => ({}))) as {
+          state?: AppState;
+        };
+        if (payload.state) setState(normalizeAppState(payload.state));
       });
     },
-    [demo],
+    [demo, shouldLoadRemote],
   );
 
   const refresh = useCallback(async () => {

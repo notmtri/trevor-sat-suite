@@ -43,6 +43,7 @@ import type {
   Attempt,
   Question,
   ResponseRecord,
+  ScoreSummary,
   TestModule,
 } from "@/lib/domain";
 import { preloadQuestionAssets } from "@/lib/question-assets";
@@ -52,6 +53,10 @@ import {
   isSupabaseConfigured,
 } from "@/lib/supabase/client";
 import { cn, formatDuration } from "@/lib/utils";
+import { buildScoreSummary } from "@/lib/work-types";
+
+const SAT_BREAK_SECONDS = 10 * 60;
+const SPLIT_STORAGE_KEY = "trevors-sat-test-split-v1";
 
 type RunnerStage =
   | "launch"
@@ -129,6 +134,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [deadline, setDeadline] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [breakDeadline, setBreakDeadline] = useState(0);
+  const [breakRemainingSeconds, setBreakRemainingSeconds] = useState(0);
   const [timerHidden, setTimerHidden] = useState(false);
   const [responseValues, setResponseValues] = useState<Record<string, string>>(
     {},
@@ -151,6 +158,9 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   const [exitOpen, setExitOpen] = useState(false);
   const [online, setOnline] = useState(true);
   const [phoneBlocked, setPhoneBlocked] = useState(false);
+  const [splitLayout, setSplitLayout] = useState(() =>
+    typeof window === "undefined" ? false : window.innerWidth >= 1024,
+  );
   const [checkedQuestionId, setCheckedQuestionId] = useState<string | null>(
     null,
   );
@@ -163,6 +173,11 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   const [starting, setStarting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [preloadRetry, setPreloadRetry] = useState(0);
+  const [splitPercent, setSplitPercent] = useState(() => {
+    if (typeof window === "undefined") return 58;
+    const saved = Number(localStorage.getItem(SPLIT_STORAGE_KEY));
+    return Number.isFinite(saved) ? Math.min(72, Math.max(40, saved)) : 58;
+  });
   const [assetLoad, setAssetLoad] = useState<AssetLoadState>({
     status: "idle",
     loaded: 0,
@@ -248,6 +263,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     const update = () => {
       setOnline(navigator.onLine);
       setPhoneBlocked(window.innerWidth < 700);
+      setSplitLayout(window.innerWidth >= 1024);
     };
     update();
     window.addEventListener("online", update);
@@ -261,11 +277,35 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   }, []);
 
   useEffect(() => {
+    localStorage.setItem(SPLIT_STORAGE_KEY, String(Math.round(splitPercent)));
+  }, [splitPercent]);
+
+  useEffect(() => {
     document.body.style.overflow = stage === "testing" ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
   }, [stage]);
+
+  useEffect(() => {
+    if (stage !== "break" || test?.workType !== "full_length" || !breakDeadline) {
+      return;
+    }
+    const update = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((breakDeadline - Date.now()) / 1000),
+      );
+      setBreakRemainingSeconds(remaining);
+      if (remaining === 0) {
+        setStage("launch");
+        setBreakDeadline(0);
+      }
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [breakDeadline, stage, test?.workType]);
 
   useEffect(() => {
     if (!hydrated || restoredRef.current) return;
@@ -488,6 +528,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               released: boolean;
               rawCorrect?: number;
               rawTotal?: number;
+              scoreSummary?: ScoreSummary;
             }
           | undefined;
         if (production) {
@@ -541,6 +582,9 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             ? serverResult.rawCorrect
             : score.correct,
           rawTotal: serverResult ? serverResult.rawTotal : score.total,
+          scoreSummary:
+            serverResult?.scoreSummary ??
+            buildScoreSummary(test, allQuestions, responses),
           released:
             serverResult?.released ??
             assignment.feedbackPolicy !== "tutor_release",
@@ -803,16 +847,18 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     const nextIndex = moduleIndex + 1;
     const previousSection = modules[moduleIndex]?.section;
     const nextSection = modules[nextIndex]?.section;
+    const startsTimedBreak =
+      test?.workType === "full_length" &&
+      previousSection === "Reading and Writing" &&
+      nextSection === "Math";
     setModuleIndex(nextIndex);
     setQuestionIndex(0);
     setDeadline(0);
     setRemainingSeconds(0);
+    setBreakDeadline(startsTimedBreak ? Date.now() + SAT_BREAK_SECONDS * 1000 : 0);
+    setBreakRemainingSeconds(startsTimedBreak ? SAT_BREAK_SECONDS : 0);
     setCheckedQuestionId(null);
-    setStage(
-      previousSection === "Reading and Writing" && nextSection === "Math"
-        ? "break"
-        : "launch",
-    );
+    setStage(startsTimedBreak ? "break" : "launch");
   }
 
   function toggleEliminated(choice: string) {
@@ -837,6 +883,26 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         { x, y },
       ],
     }));
+  }
+
+  function startSplitDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const container = event.currentTarget.parentElement;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const update = (clientX: number) => {
+      const percent = ((clientX - rect.left) / rect.width) * 100;
+      setSplitPercent(Math.min(72, Math.max(40, percent)));
+    };
+    update(event.clientX);
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      update(moveEvent.clientX);
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stop);
   }
 
   if (!hydrated) {
@@ -901,6 +967,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   if (stage === "launch" || stage === "break" || stage === "module_complete") {
     const isBreak = stage === "break";
     const moduleDone = stage === "module_complete";
+    const timedBreak = isBreak && test.workType === "full_length";
+    const breakReady = !timedBreak || breakRemainingSeconds === 0;
     return (
       <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-[var(--wash)] p-5">
         <Card className="w-full max-w-2xl overflow-hidden">
@@ -922,10 +990,23 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   Take the official-style break before Math.
                 </p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Your Reading and Writing answers are locked. Continue when
-                  you are ready to begin the next section. Use this pause to
-                  stretch, get water, and reset your workspace.
+                  Your Reading and Writing answers are locked.{" "}
+                  {timedBreak
+                    ? "Continue when the 10-minute break ends."
+                    : "Continue when you are ready."}{" "}
+                  Use this pause to stretch, get water, and reset your
+                  workspace.
                 </p>
+                {timedBreak && (
+                  <div className="mt-5 rounded-xl border bg-blue-50 p-4 text-center">
+                    <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                      Break remaining
+                    </p>
+                    <p className="mt-2 font-mono text-3xl font-black text-[var(--navy)]">
+                      {formatDuration(breakRemainingSeconds)}
+                    </p>
+                  </div>
+                )}
               </>
             ) : moduleDone ? (
               <>
@@ -1075,6 +1156,8 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   !moduleDone &&
                   !isBreak &&
                   assetLoad.status !== "ready"
+                    ? true
+                    : isBreak && !breakReady
                 }
                 onClick={
                   moduleDone
@@ -1087,7 +1170,9 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 {moduleDone
                   ? "Continue"
                   : isBreak
-                    ? "Continue to Math"
+                    ? breakReady
+                      ? "Continue to Math"
+                      : `Break ends in ${formatDuration(breakRemainingSeconds)}`
                     : assetLoad.status === "loading"
                       ? `Preparing ${assetLoad.loaded}/${assetLoad.total}`
                       : deadline > 0
@@ -1109,6 +1194,15 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
 
   if (stage === "submitted" && submittedAttempt) {
     const released = submittedAttempt.released;
+    const summary =
+      submittedAttempt.scoreSummary ??
+      buildScoreSummary(test, allQuestions, submittedAttempt.responses);
+    const responseMap = new Map(
+      submittedAttempt.responses.map((response) => [
+        response.questionId,
+        response,
+      ]),
+    );
     return (
       <div className="fixed inset-0 z-[100] overflow-y-auto bg-[var(--wash)] p-5 sm:p-8">
         <div className="mx-auto max-w-5xl">
@@ -1131,7 +1225,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                         Correct
                       </p>
                       <p className="mt-2 text-3xl font-black">
-                        {submittedAttempt.rawCorrect} / {submittedAttempt.rawTotal}
+                        {summary.rawCorrect} / {summary.rawTotal}
                       </p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-5">
@@ -1139,24 +1233,46 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                         Accuracy
                       </p>
                       <p className="mt-2 text-3xl font-black">
-                        {Math.round(
-                          ((submittedAttempt.rawCorrect ?? 0) /
-                            Math.max(1, submittedAttempt.rawTotal ?? 1)) *
-                            100,
-                        )}
-                        %
+                        {Math.round(summary.accuracy * 100)}%
                       </p>
                     </div>
                     <div className="rounded-xl bg-slate-50 p-5">
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                        Score type
+                        Estimated SAT
                       </p>
-                      <p className="mt-2 text-lg font-black">Raw practice result</p>
+                      <p className="mt-2 text-3xl font-black">
+                        {summary.estimatedScoreRange
+                          ? `${summary.estimatedScoreRange[0]}-${summary.estimatedScoreRange[1]}`
+                          : "N/A"}
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        {summary.label}
+                      </p>
                     </div>
                   </div>
+                  {summary.sections.length > 0 && (
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      {summary.sections.map((section) => (
+                        <div
+                          key={section.section}
+                          className="rounded-xl border bg-white p-4"
+                        >
+                          <p className="text-sm font-black">
+                            {section.section}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-slate-500">
+                            {section.rawCorrect}/{section.rawTotal} correct ·{" "}
+                            {section.estimatedScoreRange[0]}-
+                            {section.estimatedScoreRange[1]} estimated
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-7 space-y-5">
                     {allQuestions.map((question, index) => {
-                      const value = responseValues[question.id] ?? "";
+                      const response = responseMap.get(question.id);
+                      const value = response?.value ?? "";
                       const correct = isResponseCorrect(question, value);
                       return (
                         <div key={question.id} className="rounded-2xl border p-5">
@@ -1165,6 +1281,42 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                             <Badge tone={correct ? "green" : "rose"}>
                               {correct ? "Correct" : "Review"}
                             </Badge>
+                          </div>
+                          <div className="mb-4 grid gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-4">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                                Your answer
+                              </p>
+                              <p className="mt-1 font-black">
+                                {value.trim() || "No answer"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                                Correct answer
+                              </p>
+                              <p className="mt-1 font-black">
+                                {question.acceptedAnswers
+                                  .map((answer) => answer.value)
+                                  .join(", ") || "Not configured"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                                Timing
+                              </p>
+                              <p className="mt-1 font-black">
+                                {formatDuration(response?.secondsSpent ?? 0)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                                Flag
+                              </p>
+                              <p className="mt-1 font-black">
+                                {response?.flagged ? "Marked" : "Not marked"}
+                              </p>
+                            </div>
                           </div>
                           <div className="space-y-3">
                             {question.rationaleAssets.map((asset) => (
@@ -1273,7 +1425,11 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       <div className="flex min-h-0 flex-1">
         <section
           ref={testContentRef}
-          className="scrollbar-thin min-w-0 flex-1 overflow-y-auto bg-[#f5f6f8]"
+          className={cn(
+            "scrollbar-thin min-w-0 flex-1 overflow-y-auto bg-[#f5f6f8]",
+            splitLayout && "lg:flex-none",
+          )}
+          style={splitLayout ? { flexBasis: `${splitPercent}%` } : undefined}
         >
           <div className="mx-auto max-w-5xl p-4 sm:p-7">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1373,123 +1529,265 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               )}
             </div>
 
-            <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <p className="font-black">Your answer</p>
-                <span className="text-xs font-semibold text-slate-400">
-                  {activeQuestion.responseType === "multiple_choice"
-                    ? "Select one answer"
-                    : "Enter one accepted value"}
-                </span>
-              </div>
-              {activeQuestion.responseType === "multiple_choice" ? (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {["A", "B", "C", "D"].map((choice) => {
-                    const struck = currentEliminated.includes(choice);
-                    return (
-                      <div key={choice} className="flex gap-2">
-                        <button
-                          type="button"
-                          className={cn(
-                            "focus-ring flex h-12 flex-1 items-center gap-3 rounded-xl border px-4 text-left font-black transition",
-                            selected === choice
-                              ? "border-[var(--blue)] bg-blue-50 text-[var(--navy)] ring-2 ring-blue-100"
-                              : "hover:bg-slate-50",
-                            struck && "text-slate-400 line-through",
-                          )}
-                          onClick={() => {
-                            setCheckedQuestionId(null);
-                            setCheckedCorrect(null);
-                            setResponseValues((current) => ({
-                              ...current,
-                              [activeQuestion.id]: choice,
-                            }));
-                          }}
-                        >
-                          <span
+            {!splitLayout && (
+              <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="font-black">Your answer</p>
+                  <span className="text-xs font-semibold text-slate-400">
+                    {activeQuestion.responseType === "multiple_choice"
+                      ? "Select one answer"
+                      : "Enter one accepted value"}
+                  </span>
+                </div>
+                {activeQuestion.responseType === "multiple_choice" ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {["A", "B", "C", "D"].map((choice) => {
+                      const struck = currentEliminated.includes(choice);
+                      return (
+                        <div key={choice} className="flex gap-2">
+                          <button
+                            type="button"
                             className={cn(
-                              "grid h-7 w-7 place-items-center rounded-full border text-xs",
-                              selected === choice &&
-                                "border-[var(--blue)] bg-[var(--blue)] text-white",
+                              "focus-ring flex h-12 flex-1 items-center gap-3 rounded-xl border px-4 text-left font-black transition",
+                              selected === choice
+                                ? "border-[var(--blue)] bg-blue-50 text-[var(--navy)] ring-2 ring-blue-100"
+                                : "hover:bg-slate-50",
+                              struck && "text-slate-400 line-through",
                             )}
+                            onClick={() => {
+                              setCheckedQuestionId(null);
+                              setCheckedCorrect(null);
+                              setResponseValues((current) => ({
+                                ...current,
+                                [activeQuestion.id]: choice,
+                              }));
+                            }}
                           >
-                            {choice}
-                          </span>
-                          Choice {choice}
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(
-                            "grid h-12 w-12 place-items-center rounded-xl border",
-                            struck
-                              ? "bg-slate-100 text-slate-700"
-                              : "text-slate-400 hover:bg-slate-50",
-                          )}
-                          title={`Eliminate choice ${choice}`}
-                          aria-label={`Eliminate choice ${choice}`}
-                          onClick={() => toggleEliminated(choice)}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <input
-                  value={selected}
-                  onChange={(event) => {
-                    setCheckedQuestionId(null);
-                    setCheckedCorrect(null);
-                    setResponseValues((current) => ({
-                      ...current,
-                      [activeQuestion.id]: event.target.value,
-                    }));
-                  }}
-                  className="focus-ring mt-4 h-12 w-full max-w-sm rounded-xl border px-4 text-lg font-bold"
-                  inputMode="decimal"
-                  aria-label="Student-produced response"
-                  placeholder="Enter your answer"
-                />
-              )}
-              {feedbackImmediate && selected && (
-                <div className="mt-4">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void checkAnswer()}
-                  >
-                    Check answer
-                  </Button>
-                  {visibleCheckedCorrect !== null && (
-                    <span
-                      className={cn(
-                        "ml-3 text-sm font-bold",
-                        visibleCheckedCorrect
-                          ? "text-emerald-700"
-                          : "text-rose-700",
-                      )}
+                            <span
+                              className={cn(
+                                "grid h-7 w-7 place-items-center rounded-full border text-xs",
+                                selected === choice &&
+                                  "border-[var(--blue)] bg-[var(--blue)] text-white",
+                              )}
+                            >
+                              {choice}
+                            </span>
+                            Choice {choice}
+                          </button>
+                          <button
+                            type="button"
+                            className={cn(
+                              "grid h-12 w-12 place-items-center rounded-xl border",
+                              struck
+                                ? "bg-slate-100 text-slate-700"
+                                : "text-slate-400 hover:bg-slate-50",
+                            )}
+                            title={`Eliminate choice ${choice}`}
+                            aria-label={`Eliminate choice ${choice}`}
+                            onClick={() => toggleEliminated(choice)}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <input
+                    value={selected}
+                    onChange={(event) => {
+                      setCheckedQuestionId(null);
+                      setCheckedCorrect(null);
+                      setResponseValues((current) => ({
+                        ...current,
+                        [activeQuestion.id]: event.target.value,
+                      }));
+                    }}
+                    className="focus-ring mt-4 h-12 w-full max-w-sm rounded-xl border px-4 text-lg font-bold"
+                    inputMode="decimal"
+                    aria-label="Student-produced response"
+                    placeholder="Enter your answer"
+                  />
+                )}
+                {feedbackImmediate && selected && (
+                  <div className="mt-4">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void checkAnswer()}
                     >
-                      {visibleCheckedCorrect
-                        ? "Correct"
-                        : "Not yet. Review your work and try again."}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
+                      Check answer
+                    </Button>
+                    {visibleCheckedCorrect !== null && (
+                      <span
+                        className={cn(
+                          "ml-3 text-sm font-bold",
+                          visibleCheckedCorrect
+                            ? "text-emerald-700"
+                            : "text-rose-700",
+                        )}
+                      >
+                        {visibleCheckedCorrect
+                          ? "Correct"
+                          : "Not yet. Review your work and try again."}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
+
+        {splitLayout && (
+          <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize question and answer panes"
+              tabIndex={0}
+              className="w-2 cursor-col-resize border-x bg-slate-100 transition hover:bg-blue-100"
+              onPointerDown={startSplitDrag}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  setSplitPercent((value) => Math.max(40, value - 2));
+                }
+                if (event.key === "ArrowRight") {
+                  setSplitPercent((value) => Math.min(72, value + 2));
+                }
+              }}
+            />
+
+            <aside
+              className="scrollbar-thin overflow-y-auto bg-white p-5 lg:flex-none"
+              style={{ flexBasis: `${100 - splitPercent}%` }}
+            >
+          <div className="sticky top-0 rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Question {questionIndex + 1} of {activeQuestions.length}
+                </p>
+                <p className="mt-1 font-black">Your answer</p>
+              </div>
+              {flagged.has(activeQuestion.id) && (
+                <Badge tone="amber">Marked for review</Badge>
+              )}
+            </div>
+            <span className="mt-3 block text-xs font-semibold text-slate-400">
+              {activeQuestion.responseType === "multiple_choice"
+                ? "Select one answer"
+                : "Enter one accepted value"}
+            </span>
+            {activeQuestion.responseType === "multiple_choice" ? (
+              <div className="mt-4 grid gap-3">
+                {["A", "B", "C", "D"].map((choice) => {
+                  const struck = currentEliminated.includes(choice);
+                  return (
+                    <div key={choice} className="flex gap-2">
+                      <button
+                        type="button"
+                        className={cn(
+                          "focus-ring flex h-12 flex-1 items-center gap-3 rounded-xl border px-4 text-left font-black transition",
+                          selected === choice
+                            ? "border-[var(--blue)] bg-blue-50 text-[var(--navy)] ring-2 ring-blue-100"
+                            : "hover:bg-slate-50",
+                          struck && "text-slate-400 line-through",
+                        )}
+                        onClick={() => {
+                          setCheckedQuestionId(null);
+                          setCheckedCorrect(null);
+                          setResponseValues((current) => ({
+                            ...current,
+                            [activeQuestion.id]: choice,
+                          }));
+                        }}
+                      >
+                        <span
+                          className={cn(
+                            "grid h-7 w-7 place-items-center rounded-full border text-xs",
+                            selected === choice &&
+                              "border-[var(--blue)] bg-[var(--blue)] text-white",
+                          )}
+                        >
+                          {choice}
+                        </span>
+                        Choice {choice}
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          "grid h-12 w-12 place-items-center rounded-xl border",
+                          struck
+                            ? "bg-slate-100 text-slate-700"
+                            : "text-slate-400 hover:bg-slate-50",
+                        )}
+                        title={`Eliminate choice ${choice}`}
+                        aria-label={`Eliminate choice ${choice}`}
+                        onClick={() => toggleEliminated(choice)}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <input
+                value={selected}
+                onChange={(event) => {
+                  setCheckedQuestionId(null);
+                  setCheckedCorrect(null);
+                  setResponseValues((current) => ({
+                    ...current,
+                    [activeQuestion.id]: event.target.value,
+                  }));
+                }}
+                className="focus-ring mt-4 h-12 w-full rounded-xl border px-4 text-lg font-bold"
+                inputMode="decimal"
+                aria-label="Student-produced response"
+                placeholder="Enter your answer"
+              />
+            )}
+            {feedbackImmediate && selected && (
+              <div className="mt-4">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void checkAnswer()}
+                >
+                  Check answer
+                </Button>
+                {visibleCheckedCorrect !== null && (
+                  <span
+                    className={cn(
+                      "ml-3 text-sm font-bold",
+                      visibleCheckedCorrect
+                        ? "text-emerald-700"
+                        : "text-rose-700",
+                    )}
+                  >
+                    {visibleCheckedCorrect
+                      ? "Correct"
+                      : "Not yet. Review your work and try again."}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
+          </>
+        )}
 
         {notesOpen && (
           <>
             <button
               type="button"
               aria-label="Close question notes"
-              className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden"
+              className="fixed inset-0 z-30 bg-slate-950/35"
               onClick={() => setNotesOpen(false)}
             />
-            <aside className="fixed inset-x-4 bottom-20 top-20 z-40 overflow-y-auto rounded-2xl border bg-white p-5 shadow-2xl lg:static lg:w-80 lg:shrink-0 lg:rounded-none lg:border-y-0 lg:border-r-0 lg:shadow-none">
+            <aside className="fixed bottom-20 right-4 top-20 z-40 w-[min(380px,calc(100vw-2rem))] overflow-y-auto rounded-2xl border bg-white p-5 shadow-2xl">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-black">Question notes</p>
