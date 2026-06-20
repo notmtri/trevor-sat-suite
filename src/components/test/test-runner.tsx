@@ -809,12 +809,18 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       setCheckedCorrect(isResponseCorrect(activeQuestion, selected));
       return;
     }
+    if (!serverAttemptId) {
+      setCheckedCorrect(null);
+      setSyncError("Start the module before checking answers.");
+      return;
+    }
     try {
       const response = await fetch("/api/attempts/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           assignmentId: assignment.id,
+          attemptId: serverAttemptId,
           questionId: activeQuestion.id,
           value: selected,
         }),

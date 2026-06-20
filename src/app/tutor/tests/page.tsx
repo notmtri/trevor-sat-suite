@@ -91,6 +91,15 @@ export default function TestsPage() {
   const activeTestAssigned = state.assignments.some(
     (assignment) => assignment.testId === activeTestId,
   );
+  const usedQuestionIds = useMemo(
+    () =>
+      new Set(
+        activeTest?.modules.flatMap((module) =>
+          module.questions.map((question) => question.questionId),
+        ) ?? [],
+      ),
+    [activeTest],
+  );
   const activeStudents = state.students.filter(
     (student) => student.status === "active",
   );
@@ -180,12 +189,16 @@ export default function TestsPage() {
 
   function addQuestionToModule(moduleId: string, questionId: string) {
     if (!activeTest || activeTestAssigned) return;
+    if (
+      activeTest.modules.some((module) =>
+        module.questions.some((question) => question.questionId === questionId),
+      )
+    ) {
+      return;
+    }
     updateTest(activeTest.id, {
       modules: activeTest.modules.map((module) => {
         if (module.id !== moduleId) return module;
-        if (module.questions.some((question) => question.questionId === questionId)) {
-          return module;
-        }
         return {
           ...module,
           questions: [
@@ -400,12 +413,7 @@ export default function TestsPage() {
                     const search = moduleSearch[module.id]?.toLowerCase() ?? "";
                     const available = publishedQuestions
                       .filter((question) => question.section === module.section)
-                      .filter(
-                        (question) =>
-                          !module.questions.some(
-                            (item) => item.questionId === question.id,
-                          ),
-                      )
+                      .filter((question) => !usedQuestionIds.has(question.id))
                       .filter((question) =>
                         `${question.sourceId} ${question.domain} ${question.skill} ${(question.tags ?? []).join(" ")}`
                           .toLowerCase()

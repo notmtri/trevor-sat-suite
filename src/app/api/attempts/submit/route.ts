@@ -84,6 +84,24 @@ export async function POST(request: Request) {
   if (placementsError) {
     return NextResponse.json({ error: placementsError.message }, { status: 500 });
   }
+  const assignedQuestionIds = new Set(
+    (placements ?? []).map((placement) => placement.question_id),
+  );
+  const responseQuestionIds = parsed.data.responses.map(
+    (response) => response.questionId,
+  );
+  if (
+    !assignedQuestionIds.size ||
+    new Set(responseQuestionIds).size !== responseQuestionIds.length ||
+    parsed.data.responses.some(
+      (response) => !assignedQuestionIds.has(response.questionId),
+    )
+  ) {
+    return NextResponse.json(
+      { error: "Submission contains questions outside this assignment." },
+      { status: 400 },
+    );
+  }
   const placementMap = new Map(
     (placements ?? []).map((placement) => [
       placement.question_id,

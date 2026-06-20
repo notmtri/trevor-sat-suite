@@ -8,6 +8,7 @@ import {
 
 const checkSchema = z.object({
   assignmentId: z.string().uuid(),
+  attemptId: z.string().uuid(),
   questionId: z.string().uuid(),
   value: z.string().max(80),
 });
@@ -23,17 +24,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid answer check." }, { status: 400 });
   }
   const { admin, user } = session;
-  const { data: assignment } = await admin
+  const { data: assignment, error: assignmentError } = await admin
     .from("assignments")
     .select("id,test_id,feedback_policy,status,available_at,due_at")
     .eq("id", parsed.data.assignmentId)
     .maybeSingle();
-  const { data: recipient } = await admin
+  if (assignmentError) {
+    return NextResponse.json({ error: assignmentError.message }, { status: 500 });
+  }
+  const { data: recipient, error: recipientError } = await admin
     .from("assignment_students")
     .select("student_id,available_at,due_at,recipient_status")
     .eq("assignment_id", parsed.data.assignmentId)
     .eq("student_id", user.id)
     .maybeSingle();
+  if (recipientError) {
+    return NextResponse.json({ error: recipientError.message }, { status: 500 });
+  }
   const effectiveAvailableAt = recipient?.available_at ?? assignment?.available_at;
   const effectiveDueAt = recipient?.due_at ?? assignment?.due_at;
   if (
@@ -47,10 +54,25 @@ export async function POST(request: Request) {
   ) {
     return NextResponse.json({ error: "Answer check unavailable." }, { status: 403 });
   }
+  const { data: attempt, error: attemptError } = await admin
+    .from("attempts")
+    .select("id,current_module_id")
+    .eq("id", parsed.data.attemptId)
+    .eq("assignment_id", assignment.id)
+    .eq("student_id", user.id)
+    .eq("status", "in_progress")
+    .maybeSingle();
+  if (attemptError) {
+    return NextResponse.json({ error: attemptError.message }, { status: 500 });
+  }
+  if (!attempt) {
+    return NextResponse.json({ error: "Answer check unavailable." }, { status: 403 });
+  }
   const { data: placement } = await admin
     .from("module_questions")
     .select("question_id,test_modules!inner(test_id)")
     .eq("question_id", parsed.data.questionId)
+    .eq("module_id", attempt.current_module_id)
     .eq("test_modules.test_id", assignment.test_id)
     .limit(1)
     .maybeSingle();

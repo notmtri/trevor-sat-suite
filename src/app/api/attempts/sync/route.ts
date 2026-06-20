@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   const now = new Date();
   const { data: attempt, error: attemptError } = await admin
     .from("attempts")
-    .select("id,status,server_deadline,current_module_id")
+    .select("id,status,server_deadline,current_module_id,assignment_id,assignments!inner(test_id)")
     .eq("id", parsed.data.attemptId)
     .eq("student_id", user.id)
     .maybeSingle();
@@ -67,6 +67,47 @@ export async function POST(request: Request) {
   }
   if (attempt.current_module_id !== parsed.data.moduleId) {
     return NextResponse.json({ error: "Module mismatch." }, { status: 409 });
+  }
+  const assignmentRelation = Array.isArray(attempt.assignments)
+    ? attempt.assignments[0]
+    : attempt.assignments;
+  const assignmentTestId =
+    typeof assignmentRelation?.test_id === "string"
+      ? assignmentRelation.test_id
+      : "";
+  if (!assignmentTestId) {
+    return NextResponse.json(
+      { error: "Attempt assignment is unavailable." },
+      { status: 409 },
+    );
+  }
+  const { data: placements, error: placementsError } = await admin
+    .from("module_questions")
+    .select("question_id,question_order,test_modules!inner(test_id)")
+    .eq("module_id", parsed.data.moduleId)
+    .eq("test_modules.test_id", assignmentTestId);
+  if (placementsError) {
+    return NextResponse.json({ error: placementsError.message }, { status: 500 });
+  }
+  const allowedQuestionIds = new Set(
+    (placements ?? []).map((placement) => placement.question_id),
+  );
+  const responseQuestionIds = parsed.data.responses.map(
+    (response) => response.questionId,
+  );
+  if (
+    !allowedQuestionIds.size ||
+    new Set(responseQuestionIds).size !== responseQuestionIds.length ||
+    parsed.data.currentQuestionIndex >= allowedQuestionIds.size ||
+    parsed.data.answeredCount > allowedQuestionIds.size ||
+    parsed.data.responses.some(
+      (response) => !allowedQuestionIds.has(response.questionId),
+    )
+  ) {
+    return NextResponse.json(
+      { error: "Response payload contains questions outside this module." },
+      { status: 400 },
+    );
   }
 
   if (parsed.data.responses.length) {

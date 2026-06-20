@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { duplicatedQuestionIds } from "@/lib/work-types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const workTypeSchema = z.enum([
@@ -61,6 +62,12 @@ export async function POST(request: Request) {
     );
   }
   const test = parsed.data;
+  if (duplicatedQuestionIds(test).length) {
+    return NextResponse.json(
+      { error: "Each question can appear only once in a test." },
+      { status: 400 },
+    );
+  }
   const questionIds = [
     ...new Set(
       test.modules.flatMap((module) =>
@@ -71,7 +78,7 @@ export async function POST(request: Request) {
   if (questionIds.length) {
     const { data: ownedQuestions, error } = await supabase
       .from("questions")
-      .select("id")
+      .select("id,status")
       .eq("owner_id", user.id)
       .in("id", questionIds);
     if (error) {
@@ -80,6 +87,12 @@ export async function POST(request: Request) {
     if ((ownedQuestions ?? []).length !== questionIds.length) {
       return NextResponse.json(
         { error: "One or more questions are unavailable." },
+        { status: 400 },
+      );
+    }
+    if ((ownedQuestions ?? []).some((question) => question.status !== "published")) {
+      return NextResponse.json(
+        { error: "Only published questions can be added to tests." },
         { status: 400 },
       );
     }
@@ -99,6 +112,21 @@ export async function POST(request: Request) {
   });
   if (testError) {
     return NextResponse.json({ error: testError.message }, { status: 500 });
+  }
+
+  const moduleIds = test.modules.map((testModule) => testModule.id);
+  const staleModulesQuery = supabase
+    .from("test_modules")
+    .delete()
+    .eq("test_id", test.id);
+  const { error: staleModulesError } = moduleIds.length
+    ? await staleModulesQuery.not("id", "in", `(${moduleIds.join(",")})`)
+    : await staleModulesQuery;
+  if (staleModulesError) {
+    return NextResponse.json(
+      { error: staleModulesError.message },
+      { status: 500 },
+    );
   }
 
   for (const testModule of test.modules) {

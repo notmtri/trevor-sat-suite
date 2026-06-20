@@ -141,7 +141,7 @@ test("questions used by assigned tests are protected from deletion", async ({
   await page.goto("/tutor/questions");
   await page.getByRole("button", { name: /ac472881/i }).click();
   await expect(
-    page.getByText(/Used in 1 test.*Remove it from those tests/i),
+    page.getByText(/Used in 1 test.*Remove it from tests before deleting it/i),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Delete question" }),

@@ -106,6 +106,28 @@ describe("assignment lifecycle helpers", () => {
     });
   });
 
+  it("keeps excused recipients visible without counting them as active", () => {
+    const cards = getStudentAssignmentCards(
+      {
+        ...state(),
+        assignments: [
+          {
+            ...assignment,
+            studentIds: [],
+            recipients: [{ studentId: "student-1", status: "excused" }],
+          },
+        ],
+      },
+      "student-1",
+    );
+
+    expect(cards[0]).toMatchObject({
+      attemptsUsed: 0,
+      status: "excused",
+      label: "Excused",
+    });
+  });
+
   it("notifies the tutor when a submitted report needs review", () => {
     const attempt: Attempt = {
       id: "attempt-1",

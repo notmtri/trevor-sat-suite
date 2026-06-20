@@ -184,6 +184,38 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  const questionIds = [
+    ...new Set(
+      test.modules.flatMap((testModule) =>
+        testModule.questions.map((question) => question.questionId),
+      ),
+    ),
+  ];
+  if (questionIds.length) {
+    const { data: questions, error: questionsError } = await supabase
+      .from("questions")
+      .select("id,status")
+      .eq("owner_id", user.id)
+      .in("id", questionIds);
+    if (questionsError) {
+      return NextResponse.json(
+        { error: questionsError.message },
+        { status: 500 },
+      );
+    }
+    if ((questions ?? []).length !== questionIds.length) {
+      return NextResponse.json(
+        { error: "One or more test questions are unavailable." },
+        { status: 400 },
+      );
+    }
+    if ((questions ?? []).some((question) => question.status !== "published")) {
+      return NextResponse.json(
+        { error: "Only tests with published questions can be assigned." },
+        { status: 400 },
+      );
+    }
+  }
   const { data: students, error: studentsError } = await supabase
     .from("students")
     .select("user_id,time_multiplier")

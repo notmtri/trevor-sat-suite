@@ -53,6 +53,7 @@ export default function QuestionLibraryPage() {
   const [selected, setSelected] = useState<Question | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
 
@@ -129,19 +130,42 @@ export default function QuestionLibraryPage() {
   }
 
   async function deleteUnusedSelection() {
+    if (bulkDeleting) return;
     const safeIds = selectedIds.filter(
       (questionId) => questionUsage(state, questionId).safeToDelete,
     );
+    const failedIds: string[] = [];
     let deleted = 0;
-    for (const questionId of safeIds) {
-      await deleteQuestion(questionId);
-      deleted += 1;
+    setBulkDeleting(true);
+    setBulkMessage("");
+    try {
+      for (const questionId of safeIds) {
+        try {
+          await deleteQuestion(questionId);
+          deleted += 1;
+        } catch {
+          failedIds.push(questionId);
+        }
+      }
+    } finally {
+      setBulkDeleting(false);
     }
-    const skipped = selectedIds.length - deleted;
-    setSelectedIds([]);
-    setBulkMessage(
-      `${deleted} unused question${deleted === 1 ? "" : "s"} deleted. ${skipped} used question${skipped === 1 ? "" : "s"} skipped; archive them instead.`,
-    );
+    const skipped = selectedIds.length - safeIds.length;
+    setSelectedIds(failedIds);
+    const parts = [
+      `${deleted} unused question${deleted === 1 ? "" : "s"} deleted`,
+    ];
+    if (skipped) {
+      parts.push(
+        `${skipped} used question${skipped === 1 ? "" : "s"} skipped`,
+      );
+    }
+    if (failedIds.length) {
+      parts.push(
+        `${failedIds.length} question${failedIds.length === 1 ? "" : "s"} could not be deleted because the server still found usage`,
+      );
+    }
+    setBulkMessage(`${parts.join(". ")}.`);
   }
 
   function bulkUpdateStatus(nextStatus: Question["status"]) {
@@ -300,7 +324,8 @@ export default function QuestionLibraryPage() {
                 size="sm"
                 variant="danger"
                 icon={<Trash2 className="h-4 w-4" />}
-                disabled={selectedSafeCount === 0}
+                disabled={bulkDeleting || selectedSafeCount === 0}
+                loading={bulkDeleting}
                 onClick={() => void deleteUnusedSelection()}
               >
                 Delete unused
@@ -541,7 +566,7 @@ export default function QuestionLibraryPage() {
                         {selectedUsage?.responseCount} response
                         {selectedUsage?.responseCount === 1 ? "" : "s"}. Archive
                         it to hide it from new tests. Remove it from tests before
-                        deleting it. Remove it from those tests before deleting it.
+                        deleting it.
                       </>
                     )}
                   </div>

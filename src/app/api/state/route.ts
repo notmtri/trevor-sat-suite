@@ -428,21 +428,21 @@ export async function GET() {
   }));
 
   const assignmentStudentRows = rows(assignmentStudentsResult.data);
-  const assignments: Assignment[] = assignmentRows.map((assignment) => ({
-    id: text(assignment.id),
-    testId: text(assignment.test_id),
-    studentIds: assignmentStudentRows
-      .filter(
-        (assignmentStudent) =>
-          text(assignmentStudent.assignment_id) === text(assignment.id),
-      )
-      .map((assignmentStudent) => text(assignmentStudent.student_id)),
-    recipients: assignmentStudentRows
-      .filter(
-        (assignmentStudent) =>
-          text(assignmentStudent.assignment_id) === text(assignment.id),
-      )
-      .map((assignmentStudent) => ({
+  const assignments: Assignment[] = assignmentRows.map((assignment) => {
+    const assignmentRecipients = assignmentStudentRows.filter(
+      (assignmentStudent) =>
+        text(assignmentStudent.assignment_id) === text(assignment.id),
+    );
+    return {
+      id: text(assignment.id),
+      testId: text(assignment.test_id),
+      studentIds: assignmentRecipients
+        .filter(
+          (assignmentStudent) =>
+            text(assignmentStudent.recipient_status) !== "excused",
+        )
+        .map((assignmentStudent) => text(assignmentStudent.student_id)),
+      recipients: assignmentRecipients.map((assignmentStudent) => ({
         studentId: text(assignmentStudent.student_id),
         availableAt: text(assignmentStudent.available_at) || undefined,
         dueAt: text(assignmentStudent.due_at) || undefined,
@@ -458,16 +458,17 @@ export async function GET() {
         timeMultiplier: number(assignmentStudent.time_multiplier, 1) as
           AssignmentRecipient["timeMultiplier"],
       })),
-    title: text(assignment.title),
-    availableAt: text(assignment.available_at),
-    dueAt: text(assignment.due_at),
-    attemptLimit: number(assignment.attempt_limit, 1),
-    feedbackPolicy: text(
-      assignment.feedback_policy,
-    ) as Assignment["feedbackPolicy"],
-    allowResume: Boolean(assignment.allow_resume),
-    status: text(assignment.status) as Assignment["status"],
-  }));
+      title: text(assignment.title),
+      availableAt: text(assignment.available_at),
+      dueAt: text(assignment.due_at),
+      attemptLimit: number(assignment.attempt_limit, 1),
+      feedbackPolicy: text(
+        assignment.feedback_policy,
+      ) as Assignment["feedbackPolicy"],
+      allowResume: Boolean(assignment.allow_resume),
+      status: text(assignment.status) as Assignment["status"],
+    };
+  });
 
   const attempts: Attempt[] = attemptRows.map((attempt) => {
     const deadline = text(attempt.server_deadline);

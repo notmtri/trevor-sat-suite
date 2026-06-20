@@ -3,6 +3,7 @@ import type { Question, ResponseRecord, TestDefinition } from "@/lib/domain";
 import { makeAcceptedAnswers } from "@/lib/scoring";
 import {
   buildScoreSummary,
+  duplicatedQuestionIds,
   modulesForWorkType,
   validateTestForAssignment,
 } from "@/lib/work-types";
@@ -67,6 +68,17 @@ describe("work type templates", () => {
 
     test.modules[0].durationMinutes = 20;
     expect(validateTestForAssignment(test).errors[0]).toContain("35 minutes");
+  });
+
+  it("rejects duplicate question placements across modules", () => {
+    const test = testWithModules("math_simulation");
+    test.modules[0].questions = [{ questionId: "q1", order: 1 }];
+    test.modules[1].questions = [{ questionId: "q1", order: 1 }];
+
+    expect(duplicatedQuestionIds(test)).toEqual(["q1"]);
+    expect(validateTestForAssignment(test).errors).toContain(
+      "Each question can appear only once in a test.",
+    );
   });
 });
 

@@ -164,12 +164,29 @@ export function questionCountForTest(test: Pick<TestDefinition, "modules">) {
   return test.modules.reduce((sum, module) => sum + module.questions.length, 0);
 }
 
+export function duplicatedQuestionIds(test: Pick<TestDefinition, "modules">) {
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const testModule of test.modules) {
+    for (const question of testModule.questions) {
+      if (seen.has(question.questionId)) duplicated.add(question.questionId);
+      seen.add(question.questionId);
+    }
+  }
+  return [...duplicated];
+}
+
 export function validateTestForAssignment(test: TestDefinition) {
   const config = WORK_TYPE_CONFIGS[test.workType];
   const errors: string[] = [];
   const commonModules = test.modules
     .filter((module) => module.route === "common")
     .sort((a, b) => a.order - b.order);
+  const duplicateIds = duplicatedQuestionIds(test);
+
+  if (duplicateIds.length) {
+    errors.push("Each question can appear only once in a test.");
+  }
 
   if (test.workType === "custom") {
     const count = questionCountForTest(test);
