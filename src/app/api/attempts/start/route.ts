@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   const now = new Date();
   const { data: assignment, error: assignmentError } = await admin
     .from("assignments")
-    .select("id,test_id,available_at,due_at,attempt_limit,allow_resume,status")
+    .select("id,test_id,available_at,due_at,attempt_limit,allow_resume,status,archived_at")
     .eq("id", parsed.data.assignmentId)
     .maybeSingle();
   if (assignmentError) {
@@ -33,7 +33,8 @@ export async function POST(request: Request) {
   }
   if (
     !assignment ||
-    assignment.status !== "open"
+    assignment.status !== "open" ||
+    assignment.archived_at
   ) {
     return NextResponse.json(
       { error: "This assignment is not currently available." },

@@ -467,6 +467,16 @@ export async function GET() {
       ) as Assignment["feedbackPolicy"],
       allowResume: Boolean(assignment.allow_resume),
       status: text(assignment.status) as Assignment["status"],
+      archivedAt: text(assignment.archived_at) || undefined,
+      archivedBy: text(assignment.archived_by) || undefined,
+      archivedPreviousStatus:
+        text(assignment.archived_previous_status) === "scheduled" ||
+        text(assignment.archived_previous_status) === "open" ||
+        text(assignment.archived_previous_status) === "closed"
+          ? (text(
+              assignment.archived_previous_status,
+            ) as Assignment["status"])
+          : undefined,
     };
   });
 

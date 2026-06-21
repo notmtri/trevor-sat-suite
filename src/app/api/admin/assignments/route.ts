@@ -43,6 +43,7 @@ const assignmentSchema = z
 const assignmentUpdateSchema = z
   .object({
     id: z.string().uuid(),
+    restore: z.literal(true).optional(),
     title: z.string().min(1).max(160).optional(),
     availableAt: z.string().datetime().optional(),
     dueAt: z.string().datetime().optional(),
@@ -56,6 +57,7 @@ const assignmentUpdateSchema = z
   })
   .refine(
     (value) =>
+      value.restore === true ||
       value.title !== undefined ||
       value.availableAt !== undefined ||
       value.dueAt !== undefined ||
@@ -65,7 +67,39 @@ const assignmentUpdateSchema = z
       value.status !== undefined ||
       value.recipients !== undefined,
     { message: "No assignment changes were provided." },
+  )
+  .refine(
+    (value) =>
+      !value.restore ||
+      (value.title === undefined &&
+        value.availableAt === undefined &&
+        value.dueAt === undefined &&
+        value.attemptLimit === undefined &&
+        value.feedbackPolicy === undefined &&
+        value.allowResume === undefined &&
+        value.status === undefined &&
+        value.recipients === undefined),
+    { message: "Restore cannot be combined with other assignment changes." },
   );
+
+const assignmentDeleteSchema = z.object({
+  id: z.string().uuid(),
+});
+
+function archiveState(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    status: row.status,
+    archivedAt:
+      typeof row.archived_at === "string" ? row.archived_at : null,
+    archivedBy:
+      typeof row.archived_by === "string" ? row.archived_by : null,
+    archivedPreviousStatus:
+      typeof row.archived_previous_status === "string"
+        ? row.archived_previous_status
+        : null,
+  };
+}
 
 function parseWorkType(value: unknown, mode: TestDefinition["mode"]): WorkType {
   return value === "custom" ||
@@ -329,6 +363,32 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Assignment not found." }, { status: 404 });
   }
 
+  if (parsed.data.restore) {
+    const { error } = await supabase.rpc("restore_assignment", {
+      target_assignment: parsed.data.id,
+    });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    const { data: restored, error: restoredError } = await supabase
+      .from("assignments")
+      .select("id,status,archived_at,archived_by,archived_previous_status")
+      .eq("id", parsed.data.id)
+      .eq("tutor_id", user.id)
+      .single();
+    if (restoredError) {
+      return NextResponse.json({ error: restoredError.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, assignment: archiveState(restored) });
+  }
+
+  if (existing.archived_at) {
+    return NextResponse.json(
+      { error: "Restore this assignment before editing it." },
+      { status: 409 },
+    );
+  }
+
   const nextAvailableAt = parsed.data.availableAt ?? existing.available_at;
   const nextDueAt = parsed.data.dueAt ?? existing.due_at;
   if (new Date(nextDueAt) <= new Date(nextAvailableAt)) {
@@ -415,4 +475,60 @@ export async function PATCH(request: Request) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(request: Request) {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "Supabase is not configured." },
+      { status: 503 },
+    );
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || user.app_metadata.role !== "tutor") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  const parsed = assignmentDeleteSchema.safeParse(
+    await request.json().catch(() => null),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid assignment deletion request." },
+      { status: 400 },
+    );
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("assignments")
+    .select("id")
+    .eq("id", parsed.data.id)
+    .eq("tutor_id", user.id)
+    .maybeSingle();
+  if (existingError) {
+    return NextResponse.json({ error: existingError.message }, { status: 500 });
+  }
+  if (!existing) {
+    return NextResponse.json({ error: "Assignment not found." }, { status: 404 });
+  }
+
+  const { error } = await supabase.rpc("archive_assignment", {
+    target_assignment: parsed.data.id,
+  });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  const { data: archived, error: archivedError } = await supabase
+    .from("assignments")
+    .select("id,status,archived_at,archived_by,archived_previous_status")
+    .eq("id", parsed.data.id)
+    .eq("tutor_id", user.id)
+    .single();
+  if (archivedError) {
+    return NextResponse.json({ error: archivedError.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true, assignment: archiveState(archived) });
 }

@@ -3,6 +3,7 @@ import type { AppState, Assignment, Attempt } from "@/lib/domain";
 import {
   getStudentAssignmentCards,
   getStudentAssignmentStatus,
+  getStudentResultAttempts,
   getTutorNotifications,
 } from "@/lib/assignment-utils";
 import { defaultTutorSettings } from "@/lib/settings";
@@ -126,6 +127,80 @@ describe("assignment lifecycle helpers", () => {
       status: "excused",
       label: "Excused",
     });
+  });
+
+  it("excludes archived assignments from active student cards", () => {
+    const cards = getStudentAssignmentCards(
+      {
+        ...state(),
+        assignments: [
+          { ...assignment, archivedAt: "2026-06-09T00:00:00.000Z" },
+        ],
+      },
+      "student-1",
+    );
+
+    expect(cards).toEqual([]);
+  });
+
+  it("keeps released archived results and hides unreleased archived attempts", () => {
+    const releasedAttempt: Attempt = {
+      id: "attempt-released",
+      assignmentId: assignment.id,
+      studentId: "student-1",
+      status: "submitted",
+      currentQuestionIndex: 0,
+      answeredCount: 1,
+      connectionStatus: "online",
+      responses: [],
+      rawCorrect: 1,
+      rawTotal: 1,
+      released: true,
+    };
+    const unreleasedAttempt: Attempt = {
+      ...releasedAttempt,
+      id: "attempt-unreleased",
+      status: "expired",
+      released: false,
+    };
+    const result = getStudentResultAttempts({
+      ...state([releasedAttempt, unreleasedAttempt]),
+      assignments: [
+        { ...assignment, archivedAt: "2026-06-09T00:00:00.000Z" },
+      ],
+    });
+
+    expect(result.released.map((attempt) => attempt.id)).toEqual([
+      "attempt-released",
+    ]);
+    expect(result.unreleased).toEqual([]);
+  });
+
+  it("does not create notifications for archived assignments", () => {
+    const expiredAttempt: Attempt = {
+      id: "attempt-expired",
+      assignmentId: assignment.id,
+      studentId: "student-1",
+      status: "expired",
+      currentQuestionIndex: 0,
+      answeredCount: 0,
+      connectionStatus: "stale",
+      responses: [],
+      released: false,
+    };
+    const archivedState = {
+      ...state([expiredAttempt]),
+      assignments: [
+        { ...assignment, archivedAt: "2026-06-09T00:00:00.000Z" },
+      ],
+    };
+
+    expect(
+      getTutorNotifications(
+        archivedState,
+        new Date("2026-06-12T00:00:00.000Z"),
+      ),
+    ).toEqual([]);
   });
 
   it("notifies the tutor when a submitted report needs review", () => {

@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   const { admin, user } = session;
   const { data: assignment, error: assignmentError } = await admin
     .from("assignments")
-    .select("id,test_id,feedback_policy,status,available_at,due_at")
+    .select("id,test_id,feedback_policy,status,available_at,due_at,archived_at")
     .eq("id", parsed.data.assignmentId)
     .maybeSingle();
   if (assignmentError) {
@@ -45,6 +45,7 @@ export async function POST(request: Request) {
   const effectiveDueAt = recipient?.due_at ?? assignment?.due_at;
   if (
     !assignment ||
+    assignment.archived_at ||
     !recipient ||
     recipient.recipient_status === "excused" ||
     assignment.feedback_policy !== "immediate" ||

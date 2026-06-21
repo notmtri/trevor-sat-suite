@@ -29,6 +29,8 @@ import {
 import {
   persistAssignment,
   persistAssignmentChanges,
+  persistAssignmentDelete,
+  persistAssignmentRestore,
   persistAttemptChanges,
   persistQuestionChanges,
   persistQuestionDelete,
@@ -80,6 +82,8 @@ type AppStateContextValue = {
   updateTest: (id: string, changes: Partial<TestDefinition>) => void;
   addAssignment: (assignment: Assignment) => void;
   updateAssignment: (id: string, changes: Partial<Assignment>) => void;
+  deleteAssignment: (id: string) => Promise<void>;
+  restoreAssignment: (id: string) => Promise<void>;
   upsertAttempt: (attempt: Attempt) => void;
   updateAttempt: (
     id: string,
@@ -292,6 +296,90 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [persist],
   );
 
+  const deleteAssignment = useCallback(
+    async (id: string) => {
+      const currentAssignment = state.assignments.find(
+        (assignment) => assignment.id === id,
+      );
+      if (!currentAssignment) throw new Error("Assignment not found.");
+      const archivedAt = new Date().toISOString();
+      const responseState =
+        !demo && isSupabaseConfigured()
+          ? (await persistAssignmentDelete(id)).assignment
+          : {
+              id,
+              status: "closed" as const,
+              archivedAt,
+              archivedBy: undefined,
+              archivedPreviousStatus:
+                currentAssignment.archivedPreviousStatus ??
+                currentAssignment.status,
+            };
+      const archiveState = {
+        ...responseState,
+        archivedAt: responseState.archivedAt ?? undefined,
+        archivedBy: responseState.archivedBy ?? undefined,
+        archivedPreviousStatus:
+          responseState.archivedPreviousStatus ?? undefined,
+      };
+      setState((current) => ({
+        ...current,
+        assignments: current.assignments.map((assignment) =>
+          assignment.id === id ? { ...assignment, ...archiveState } : assignment,
+        ),
+        attempts: current.attempts.map((attempt) =>
+          attempt.assignmentId === id &&
+          (attempt.status === "not_started" || attempt.status === "in_progress")
+            ? {
+                ...attempt,
+                status: "expired",
+                submittedAt: attempt.submittedAt ?? archivedAt,
+                serverDeadline: undefined,
+                remainingSeconds: undefined,
+                connectionStatus: "stale",
+                lastHeartbeatAt: archivedAt,
+                released: false,
+              }
+            : attempt,
+        ),
+      }));
+    },
+    [demo, state.assignments],
+  );
+
+  const restoreAssignment = useCallback(
+    async (id: string) => {
+      const currentAssignment = state.assignments.find(
+        (assignment) => assignment.id === id,
+      );
+      if (!currentAssignment) throw new Error("Assignment not found.");
+      const responseState =
+        !demo && isSupabaseConfigured()
+          ? (await persistAssignmentRestore(id)).assignment
+          : {
+              id,
+              status: currentAssignment.archivedPreviousStatus ?? "closed",
+              archivedAt: undefined,
+              archivedBy: undefined,
+              archivedPreviousStatus: undefined,
+            };
+      const restoredState = {
+        ...responseState,
+        archivedAt: responseState.archivedAt ?? undefined,
+        archivedBy: responseState.archivedBy ?? undefined,
+        archivedPreviousStatus:
+          responseState.archivedPreviousStatus ?? undefined,
+      };
+      setState((current) => ({
+        ...current,
+        assignments: current.assignments.map((assignment) =>
+          assignment.id === id ? { ...assignment, ...restoredState } : assignment,
+        ),
+      }));
+    },
+    [demo, state.assignments],
+  );
+
   const upsertAttempt = useCallback((attempt: Attempt) => {
     setState((current) => {
       const existing = current.attempts.findIndex(
@@ -378,6 +466,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateTest,
       addAssignment,
       updateAssignment,
+      deleteAssignment,
+      restoreAssignment,
       upsertAttempt,
       updateAttempt,
       upsertReleasedReport,
@@ -398,6 +488,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateTest,
       addAssignment,
       updateAssignment,
+      deleteAssignment,
+      restoreAssignment,
       upsertAttempt,
       updateAttempt,
       upsertReleasedReport,

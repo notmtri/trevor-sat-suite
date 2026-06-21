@@ -61,11 +61,17 @@ export async function POST(request: Request) {
   }
   const { data: assignment, error: assignmentError } = await admin
     .from("assignments")
-    .select("test_id,feedback_policy")
+    .select("test_id,feedback_policy,archived_at")
     .eq("id", attempt.assignment_id)
     .single();
   if (assignmentError) {
     return NextResponse.json({ error: assignmentError.message }, { status: 500 });
+  }
+  if (assignment.archived_at) {
+    return NextResponse.json(
+      { error: "This assignment was removed by your tutor." },
+      { status: 409 },
+    );
   }
   const { data: modules, error: modulesError } = await admin
     .from("test_modules")

@@ -105,6 +105,9 @@ export type Assignment = {
   feedbackPolicy: FeedbackPolicy;
   allowResume: boolean;
   status: "scheduled" | "open" | "closed";
+  archivedAt?: string;
+  archivedBy?: string;
+  archivedPreviousStatus?: "scheduled" | "open" | "closed";
 };
 
 export type AssignmentRecipient = {

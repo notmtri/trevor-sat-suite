@@ -105,6 +105,46 @@ test("tutor can assign a test to one specific student", async ({ page }) => {
     .toBe(true);
 });
 
+test("tutor can delete and restore a published assignment without losing released results", async ({
+  page,
+}) => {
+  await page.goto("/tutor/tests");
+  await page
+    .getByRole("button", { name: /Algebra Checkpoint/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Delete Algebra Checkpoint?" }),
+  ).toBeVisible();
+  await expect(page.getByText("Recipients", { exact: true })).toBeVisible();
+  await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Active", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Delete assignment" }).click();
+  await expect(page.getByText("Deleted assignments (1)")).toBeVisible();
+
+  await page.goto("/student");
+  await expect(page.getByText("No assignments have been assigned yet.")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Start assignment|Resume assignment/ }),
+  ).toHaveCount(0);
+
+  await page.goto("/student/results");
+  await expect(page.getByText("Algebra Checkpoint").first()).toBeVisible();
+  await expect(page.getByText("Released").first()).toBeVisible();
+
+  await page.goto("/tutor/tests");
+  await page
+    .getByRole("button", { name: /Algebra Checkpoint/ })
+    .first()
+    .click();
+  await page.getByText("Deleted assignments (1)").click();
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(
+    page.getByRole("button", { name: "Delete", exact: true }),
+  ).toBeVisible();
+});
+
 test("tutor can manually import and delete an unused question", async ({
   page,
 }) => {

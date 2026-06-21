@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  AlertTriangle,
   Archive,
   CalendarClock,
   Check,
@@ -64,8 +65,15 @@ function sortModuleQuestions(module: TestModule) {
 }
 
 export default function TestsPage() {
-  const { state, addTest, updateTest, addAssignment, updateAssignment } =
-    useAppState();
+  const {
+    state,
+    addTest,
+    updateTest,
+    addAssignment,
+    updateAssignment,
+    deleteAssignment,
+    restoreAssignment,
+  } = useAppState();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [activeTestId, setActiveTestId] = useState<string | null>(null);
@@ -79,6 +87,13 @@ export default function TestsPage() {
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [moduleSearch, setModuleSearch] = useState<Record<string, string>>({});
+  const [deleteAssignmentId, setDeleteAssignmentId] = useState<string | null>(
+    null,
+  );
+  const [assignmentMutationId, setAssignmentMutationId] = useState<
+    string | null
+  >(null);
+  const [assignmentMutationError, setAssignmentMutationError] = useState("");
 
   const publishedQuestions = useMemo(
     () => state.questions.filter((question) => question.status === "published"),
@@ -86,7 +101,12 @@ export default function TestsPage() {
   );
   const activeTest = state.tests.find((test) => test.id === activeTestId);
   const activeAssignments = state.assignments.filter(
-    (assignment) => assignment.testId === activeTestId,
+    (assignment) =>
+      assignment.testId === activeTestId && !assignment.archivedAt,
+  );
+  const deletedAssignments = state.assignments.filter(
+    (assignment) =>
+      assignment.testId === activeTestId && Boolean(assignment.archivedAt),
   );
   const activeTestAssigned = state.assignments.some(
     (assignment) => assignment.testId === activeTestId,
@@ -111,6 +131,18 @@ export default function TestsPage() {
   const validation = activeTest
     ? validateTestForAssignment(activeTest)
     : { valid: false, errors: [] };
+  const assignmentToDelete = state.assignments.find(
+    (assignment) => assignment.id === deleteAssignmentId,
+  );
+  const deletionAttempts = state.attempts.filter(
+    (attempt) => attempt.assignmentId === deleteAssignmentId,
+  );
+  const deletionActiveCount = deletionAttempts.filter((attempt) =>
+    ["not_started", "in_progress"].includes(attempt.status),
+  ).length;
+  const deletionCompletedCount = deletionAttempts.filter((attempt) =>
+    ["submitted", "expired"].includes(attempt.status),
+  ).length;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -295,6 +327,41 @@ export default function TestsPage() {
         .filter((recipient) => recipient.status !== "excused")
         .map((recipient) => recipient.studentId),
     });
+  }
+
+  async function archiveSelectedAssignment() {
+    if (!assignmentToDelete || assignmentMutationId) return;
+    setAssignmentMutationId(assignmentToDelete.id);
+    setAssignmentMutationError("");
+    try {
+      await deleteAssignment(assignmentToDelete.id);
+      setDeleteAssignmentId(null);
+    } catch (error) {
+      setAssignmentMutationError(
+        error instanceof Error
+          ? error.message
+          : "The assignment could not be deleted.",
+      );
+    } finally {
+      setAssignmentMutationId(null);
+    }
+  }
+
+  async function restoreDeletedAssignment(assignmentId: string) {
+    if (assignmentMutationId) return;
+    setAssignmentMutationId(assignmentId);
+    setAssignmentMutationError("");
+    try {
+      await restoreAssignment(assignmentId);
+    } catch (error) {
+      setAssignmentMutationError(
+        error instanceof Error
+          ? error.message
+          : "The assignment could not be restored.",
+      );
+    } finally {
+      setAssignmentMutationId(null);
+    }
   }
 
   return (
@@ -595,6 +662,11 @@ export default function TestsPage() {
                     </p>
                   </div>
                 </div>
+                {assignmentMutationError && (
+                  <p className="rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+                    {assignmentMutationError}
+                  </p>
+                )}
                 {activeAssignments.map((assignment) => (
                   <div key={assignment.id} className="rounded-2xl border p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -605,7 +677,7 @@ export default function TestsPage() {
                           {assignment.studentIds.length === 1 ? "" : "s"}
                         </p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
                           variant="secondary"
@@ -634,6 +706,17 @@ export default function TestsPage() {
                           }
                         >
                           {assignment.status === "closed" ? "Reopen" : "Close"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          icon={<Trash2 className="h-4 w-4" />}
+                          onClick={() => {
+                            setAssignmentMutationError("");
+                            setDeleteAssignmentId(assignment.id);
+                          }}
+                        >
+                          Delete
                         </Button>
                       </div>
                     </div>
@@ -826,6 +909,57 @@ export default function TestsPage() {
                     retakes, and release controls.
                   </div>
                 )}
+                {deletedAssignments.length > 0 && (
+                  <details className="overflow-hidden rounded-2xl border bg-slate-50">
+                    <summary className="cursor-pointer px-5 py-4 text-sm font-black text-slate-700">
+                      Deleted assignments ({deletedAssignments.length})
+                    </summary>
+                    <div className="divide-y border-t bg-white">
+                      {deletedAssignments.map((assignment) => {
+                        const attemptCount = state.attempts.filter(
+                          (attempt) => attempt.assignmentId === assignment.id,
+                        ).length;
+                        return (
+                          <div
+                            key={assignment.id}
+                            className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
+                          >
+                            <div>
+                              <p className="text-sm font-bold">
+                                {assignment.title}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Deleted{" "}
+                                {assignment.archivedAt
+                                  ? new Intl.DateTimeFormat("en-US", {
+                                      dateStyle: "medium",
+                                    }).format(new Date(assignment.archivedAt))
+                                  : "recently"}
+                                {" - "}
+                                {assignment.studentIds.length} recipient
+                                {assignment.studentIds.length === 1 ? "" : "s"}
+                                {" - "}
+                                {attemptCount} attempt
+                                {attemptCount === 1 ? "" : "s"}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              icon={<RotateCcw className="h-4 w-4" />}
+                              loading={assignmentMutationId === assignment.id}
+                              onClick={() =>
+                                void restoreDeletedAssignment(assignment.id)
+                              }
+                            >
+                              Restore
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
               </div>
             </div>
           </Card>
@@ -841,6 +975,77 @@ export default function TestsPage() {
           </Card>
         )}
       </div>
+
+      <Dialog.Root
+        open={Boolean(assignmentToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !assignmentMutationId) setDeleteAssignmentId(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
+            <Dialog.Title className="text-xl font-black">
+              Delete {assignmentToDelete?.title}?
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm leading-6 text-slate-600">
+              This removes the assignment from student dashboards and cancels
+              active work. Released results remain available, and you can
+              restore the assignment later.
+            </Dialog.Description>
+            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-xl font-black">
+                  {assignmentToDelete?.studentIds.length ?? 0}
+                </p>
+                <p className="text-xs font-semibold text-slate-500">
+                  Recipients
+                </p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-xl font-black">{deletionCompletedCount}</p>
+                <p className="text-xs font-semibold text-slate-500">
+                  Completed
+                </p>
+              </div>
+              <div className="rounded-xl bg-amber-50 p-3">
+                <p className="text-xl font-black text-amber-900">
+                  {deletionActiveCount}
+                </p>
+                <p className="text-xs font-semibold text-amber-800">Active</p>
+              </div>
+            </div>
+            {deletionActiveCount > 0 && (
+              <div className="mt-4 flex gap-3 rounded-xl bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+                Active attempts will be marked expired and cannot be resumed.
+              </div>
+            )}
+            {assignmentMutationError && (
+              <p className="mt-4 rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-700">
+                {assignmentMutationError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                disabled={Boolean(assignmentMutationId)}
+                onClick={() => setDeleteAssignmentId(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                icon={<Trash2 className="h-4 w-4" />}
+                loading={assignmentMutationId === assignmentToDelete?.id}
+                onClick={() => void archiveSelectedAssignment()}
+              >
+                Delete assignment
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={builderOpen} onOpenChange={setBuilderOpen}>
         <Dialog.Portal>

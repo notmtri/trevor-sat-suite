@@ -7,6 +7,7 @@ import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import type { Assignment, Attempt, Question } from "@/lib/domain";
+import { getStudentResultAttempts } from "@/lib/assignment-utils";
 import { buildAttemptReview, reportForAttempt } from "@/lib/reports";
 import { formatDuration } from "@/lib/utils";
 import { buildScoreSummary } from "@/lib/work-types";
@@ -45,14 +46,7 @@ function orderedQuestionsForAttempt(
 
 export default function StudentResultsPage() {
   const { state } = useAppState();
-  const released = state.attempts.filter(
-    (attempt) => attempt.released && attempt.rawTotal,
-  );
-  const unreleased = state.attempts.filter(
-    (attempt) =>
-      !attempt.released &&
-      (attempt.status === "submitted" || attempt.status === "expired"),
-  );
+  const { released, unreleased } = getStudentResultAttempts(state);
 
   return (
     <>

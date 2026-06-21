@@ -10,11 +10,11 @@ import type {
   TutorSettings,
 } from "@/lib/domain";
 
-async function request(
+async function request<T = void>(
   path: string,
   method: "POST" | "PATCH" | "DELETE",
   body: unknown,
-) {
+): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -26,7 +26,14 @@ async function request(
   if (!response.ok) {
     throw new Error(payload.error ?? "The server rejected this change.");
   }
+  return payload as T;
 }
+
+export type AssignmentArchiveState = Pick<Assignment, "id" | "status"> & {
+  archivedAt: string | null;
+  archivedBy: string | null;
+  archivedPreviousStatus: Assignment["status"] | null;
+};
 
 export function persistQuestionChanges(
   id: string,
@@ -79,6 +86,22 @@ export function persistAssignmentChanges(
     status: changes.status,
     recipients: changes.recipients,
   });
+}
+
+export function persistAssignmentDelete(id: string) {
+  return request<{ assignment: AssignmentArchiveState }>(
+    "/api/admin/assignments",
+    "DELETE",
+    { id },
+  );
+}
+
+export function persistAssignmentRestore(id: string) {
+  return request<{ assignment: AssignmentArchiveState }>(
+    "/api/admin/assignments",
+    "PATCH",
+    { id, restore: true },
+  );
 }
 
 export function persistAttemptChanges(

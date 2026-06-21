@@ -28,7 +28,12 @@ export default function TutorDashboard() {
     (question) => question.status === "published",
   ).length;
   const liveAttempts = state.attempts.filter(
-    (attempt) => attempt.status === "in_progress",
+    (attempt) =>
+      attempt.status === "in_progress" &&
+      !state.assignments.find(
+        (assignment) =>
+          assignment.id === attempt.assignmentId && assignment.archivedAt,
+      ),
   );
   const completedAttempts = state.attempts.filter(
     (attempt) => attempt.status === "submitted",

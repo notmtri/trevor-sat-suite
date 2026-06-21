@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   const now = new Date();
   const { data: attempt, error: attemptError } = await admin
     .from("attempts")
-    .select("id,status,server_deadline,current_module_id,assignment_id,assignments!inner(test_id)")
+    .select("id,status,server_deadline,current_module_id,assignment_id,assignments!inner(test_id,archived_at)")
     .eq("id", parsed.data.attemptId)
     .eq("student_id", user.id)
     .maybeSingle();
@@ -75,6 +75,12 @@ export async function POST(request: Request) {
     typeof assignmentRelation?.test_id === "string"
       ? assignmentRelation.test_id
       : "";
+  if (assignmentRelation?.archived_at) {
+    return NextResponse.json(
+      { error: "This assignment was removed by your tutor." },
+      { status: 409 },
+    );
+  }
   if (!assignmentTestId) {
     return NextResponse.json(
       { error: "Attempt assignment is unavailable." },

@@ -21,7 +21,12 @@ export default function MonitorPage() {
   const { state } = useAppState();
   const [tick, setTick] = useState(0);
   const active = state.attempts.filter(
-    (attempt) => attempt.status === "in_progress",
+    (attempt) =>
+      attempt.status === "in_progress" &&
+      !state.assignments.find(
+        (assignment) =>
+          assignment.id === attempt.assignmentId && assignment.archivedAt,
+      ),
   );
 
   useEffect(() => {

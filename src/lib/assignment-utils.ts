@@ -29,6 +29,10 @@ export type StudentAssignmentCard = {
   label: string;
 };
 
+export function isAssignmentArchived(assignment: Assignment | undefined) {
+  return Boolean(assignment?.archivedAt);
+}
+
 export function getAssignmentRecipients(assignment: Assignment) {
   if (assignment.recipients?.length) return assignment.recipients;
   return assignment.studentIds.map<AssignmentRecipient>((studentId) => ({
@@ -140,7 +144,11 @@ export function getStudentAssignmentCards(
   now = new Date(),
 ): StudentAssignmentCard[] {
   return state.assignments
-    .filter((assignment) => assignmentIncludesStudent(assignment, studentId))
+    .filter(
+      (assignment) =>
+        !isAssignmentArchived(assignment) &&
+        assignmentIncludesStudent(assignment, studentId),
+    )
     .map((assignment) => {
       const attempts = getAttemptsForAssignmentStudent(
         state.attempts,
@@ -175,6 +183,23 @@ export function getStudentAssignmentCards(
     );
 }
 
+export function getStudentResultAttempts(state: AppState) {
+  const assignmentMap = new Map(
+    state.assignments.map((assignment) => [assignment.id, assignment]),
+  );
+  return {
+    released: state.attempts.filter(
+      (attempt) => attempt.released && Boolean(attempt.rawTotal),
+    ),
+    unreleased: state.attempts.filter(
+      (attempt) =>
+        !attempt.released &&
+        (attempt.status === "submitted" || attempt.status === "expired") &&
+        !isAssignmentArchived(assignmentMap.get(attempt.assignmentId)),
+    ),
+  };
+}
+
 export function getTutorNotifications(state: AppState, now = new Date()) {
   const notifications: Array<{
     id: string;
@@ -188,7 +213,7 @@ export function getTutorNotifications(state: AppState, now = new Date()) {
       (item) => item.id === attempt.assignmentId,
     );
     const student = state.students.find((item) => item.id === attempt.studentId);
-    if (!assignment || !student) continue;
+    if (!assignment || isAssignmentArchived(assignment) || !student) continue;
     if (
       (attempt.status === "submitted" || attempt.status === "expired") &&
       !attempt.released
@@ -211,6 +236,7 @@ export function getTutorNotifications(state: AppState, now = new Date()) {
   }
 
   for (const assignment of state.assignments) {
+    if (isAssignmentArchived(assignment)) continue;
     const dueTime = new Date(assignment.dueAt).getTime();
     if (
       assignment.status !== "closed" &&
