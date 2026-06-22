@@ -1,15 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowLeft,
   Check,
   FileImage,
   ImagePlus,
-  Save,
   Upload,
   X,
 } from "lucide-react";
@@ -150,11 +147,11 @@ export default function ManualQuestionImportPage() {
     if (duplicateSourceId) {
       throw new Error("A question with this ID already exists.");
     }
-    if (!promptFile || !rationaleFile) {
-      throw new Error("Add both a question image and a rationale image.");
+    if (!promptFile) {
+      throw new Error("Add a question image.");
     }
     validateQuestionImage(promptFile);
-    validateQuestionImage(rationaleFile);
+    if (rationaleFile) validateQuestionImage(rationaleFile);
     if (choicesFile) validateQuestionImage(choicesFile);
     if (
       responseType === "multiple_choice" &&
@@ -182,12 +179,9 @@ export default function ManualQuestionImportPage() {
       const choices = choicesFile
         ? await createManualQuestionAsset(choicesFile, "prompt", 1, id)
         : null;
-      const rationale = await createManualQuestionAsset(
-        rationaleFile!,
-        "rationale",
-        0,
-        id,
-      );
+      const rationale = rationaleFile
+        ? await createManualQuestionAsset(rationaleFile, "rationale", 0, id)
+        : null;
       const acceptedAnswers = makeAcceptedAnswers(
         responseType === "multiple_choice"
           ? [acceptedAnswer.toUpperCase()]
@@ -205,7 +199,7 @@ export default function ManualQuestionImportPage() {
           files: [
             prompt.fileHash,
             choices?.fileHash ?? "",
-            rationale.fileHash,
+            rationale?.fileHash ?? "",
           ],
         }),
       );
@@ -224,7 +218,7 @@ export default function ManualQuestionImportPage() {
           prompt.asset,
           ...(choices ? [choices.asset] : []),
         ],
-        rationaleAssets: [rationale.asset],
+        rationaleAssets: rationale ? [rationale.asset] : [],
         extractedText: searchableText.trim(),
         sourceFileName: "Manual image import",
         sourceDocumentPath: `manual://${id}`,
@@ -236,7 +230,7 @@ export default function ManualQuestionImportPage() {
         await persistManualQuestion(question);
       }
       addQuestions([question]);
-      router.push("/tutor/questions");
+      router.push("/tutor/tests");
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -250,17 +244,9 @@ export default function ManualQuestionImportPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Question library"
-        title="Add a question manually"
-        description="Upload the student-visible question and choices as images, then attach the private rationale and answer key."
-        actions={
-          <Link
-            href="/tutor/import"
-            className="focus-ring inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-bold hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-4 w-4" /> PDF import
-          </Link>
-        }
+        eyebrow="Test authoring"
+        title="Add a question"
+        description="Add the question, answer key, and the details needed to find it while building a test."
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -430,9 +416,8 @@ export default function ManualQuestionImportPage() {
             <ImageUploadField
               id="manual-rationale-image"
               label="Rationale image"
-              description="Shown only according to the assignment feedback policy."
+              description="Optional explanation image for future use."
               file={rationaleFile}
-              required
               onChange={setRationaleFile}
             />
           </div>
@@ -449,27 +434,18 @@ export default function ManualQuestionImportPage() {
           ) : (
             <div className="flex items-center gap-2 text-sm text-slate-500">
               <ImagePlus className="h-4 w-4" />
-              Save as a draft for later review, or publish it immediately.
+              The question will be available in the test builder immediately.
             </div>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="secondary"
-            icon={<Save className="h-4 w-4" />}
-            loading={saving === "draft"}
-            disabled={Boolean(saving)}
-            onClick={() => void saveQuestion("draft")}
-          >
-            Save draft
-          </Button>
           <Button
             icon={<Check className="h-4 w-4" />}
             loading={saving === "published"}
             disabled={Boolean(saving)}
             onClick={() => void saveQuestion("published")}
           >
-            Save and publish
+            Save question
           </Button>
         </div>
       </Card>

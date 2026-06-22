@@ -3,18 +3,33 @@ import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-const updateQuestionSchema = z.object({
-  id: z.string().uuid().optional(),
-  ids: z.array(z.string().uuid()).min(1).max(100).optional(),
-  status: z.enum(["draft", "published", "rejected", "archived"]).optional(),
-  section: z.enum(["Math", "Reading and Writing"]).optional(),
-  domain: z.string().min(1).max(160).optional(),
-  skill: z.string().min(1).max(160).optional(),
-  difficulty: z.enum(["Easy", "Medium", "Hard"]).optional(),
-  tags: z.array(z.string().min(1).max(40)).max(20).optional(),
-}).refine((value) => Boolean(value.id) !== Boolean(value.ids), {
-  message: "Provide either id or ids.",
-});
+const updateQuestionSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    ids: z.array(z.string().uuid()).min(1).max(100).optional(),
+    status: z.enum(["draft", "published", "rejected", "archived"]).optional(),
+    section: z.enum(["Math", "Reading and Writing"]).optional(),
+    domain: z.string().min(1).max(160).optional(),
+    skill: z.string().min(1).max(160).optional(),
+    difficulty: z.enum(["Easy", "Medium", "Hard"]).optional(),
+    tags: z.array(z.string().min(1).max(40)).max(20).optional(),
+    acceptedAnswers: z
+      .array(
+        z.object({
+          value: z.string().min(1).max(80),
+          normalizedValue: z.string().min(1).max(80),
+        }),
+      )
+      .min(1)
+      .max(20)
+      .optional(),
+  })
+  .refine((value) => Boolean(value.id) !== Boolean(value.ids), {
+    message: "Provide either id or ids.",
+  })
+  .refine((value) => value.acceptedAnswers === undefined || Boolean(value.id), {
+    message: "Answer keys can be updated for one question at a time.",
+  });
 
 const deleteQuestionSchema = z.object({
   id: z.string().uuid(),
@@ -43,14 +58,15 @@ export async function PATCH(request: Request) {
       { status: 400 },
     );
   }
-  const { id, ids, ...changes } = parsed.data;
+  const { id, ids, acceptedAnswers, ...changes } = parsed.data;
   if (
     changes.status === undefined &&
     changes.section === undefined &&
     changes.domain === undefined &&
     changes.skill === undefined &&
     changes.difficulty === undefined &&
-    changes.tags === undefined
+    changes.tags === undefined &&
+    acceptedAnswers === undefined
   ) {
     return NextResponse.json(
       { error: "No question changes were provided." },
@@ -65,18 +81,32 @@ export async function PATCH(request: Request) {
     ...(changes.difficulty ? { difficulty: changes.difficulty } : {}),
     ...(changes.tags ? { tags: changes.tags } : {}),
   };
-  let query = supabase
-    .from("questions")
-    .update(databaseChanges)
-    .eq("owner_id", user.id)
-    .select("id");
-  query = id ? query.eq("id", id) : query.in("id", ids ?? []);
-  const { data, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (Object.keys(databaseChanges).length) {
+    let query = supabase
+      .from("questions")
+      .update(databaseChanges)
+      .eq("owner_id", user.id)
+      .select("id");
+    query = id ? query.eq("id", id) : query.in("id", ids ?? []);
+    const { data, error } = await query;
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!data?.length) {
+      return NextResponse.json({ error: "Question not found." }, { status: 404 });
+    }
   }
-  if (!data?.length) {
-    return NextResponse.json({ error: "Question not found." }, { status: 404 });
+  if (acceptedAnswers && id) {
+    const { error } = await supabase.rpc("update_question_answers", {
+      target_question_id: id,
+      answer_values: acceptedAnswers.map((answer) => ({
+        value: answer.value,
+        normalized_value: answer.normalizedValue,
+      })),
+    });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
   }
   return NextResponse.json({ ok: true });
 }

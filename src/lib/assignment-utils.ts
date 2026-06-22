@@ -184,19 +184,13 @@ export function getStudentAssignmentCards(
 }
 
 export function getStudentResultAttempts(state: AppState) {
-  const assignmentMap = new Map(
-    state.assignments.map((assignment) => [assignment.id, assignment]),
-  );
   return {
     released: state.attempts.filter(
-      (attempt) => attempt.released && Boolean(attempt.rawTotal),
-    ),
-    unreleased: state.attempts.filter(
       (attempt) =>
-        !attempt.released &&
         (attempt.status === "submitted" || attempt.status === "expired") &&
-        !isAssignmentArchived(assignmentMap.get(attempt.assignmentId)),
+        Boolean(attempt.rawTotal),
     ),
+    unreleased: [],
   };
 }
 

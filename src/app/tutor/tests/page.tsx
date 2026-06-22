@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -8,6 +9,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
@@ -24,7 +26,6 @@ import { Card } from "@/components/ui/card";
 import { FieldLabel, Input, Select } from "@/components/ui/field";
 import type {
   Assignment,
-  FeedbackPolicy,
   Question,
   TestDefinition,
   TestModule,
@@ -42,6 +43,7 @@ import {
   WORK_TYPES,
   workTypeLabel,
 } from "@/lib/work-types";
+import { makeAcceptedAnswers } from "@/lib/scoring";
 
 function shiftDays(value: string, days: number) {
   const date = new Date(value);
@@ -68,6 +70,7 @@ export default function TestsPage() {
   const {
     state,
     addTest,
+    updateQuestion,
     updateTest,
     addAssignment,
     updateAssignment,
@@ -82,8 +85,6 @@ export default function TestsPage() {
   const [customSection, setCustomSection] =
     useState<Question["section"]>("Math");
   const [customDuration, setCustomDuration] = useState(20);
-  const [feedbackPolicy, setFeedbackPolicy] =
-    useState<FeedbackPolicy>("after_submission");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState("");
   const [moduleSearch, setModuleSearch] = useState<Record<string, string>>({});
@@ -94,6 +95,8 @@ export default function TestsPage() {
     string | null
   >(null);
   const [assignmentMutationError, setAssignmentMutationError] = useState("");
+  const [questionToEdit, setQuestionToEdit] = useState<Question | null>(null);
+  const [questionAnswer, setQuestionAnswer] = useState("");
 
   const publishedQuestions = useMemo(
     () => state.questions.filter((question) => question.status === "published"),
@@ -143,6 +146,18 @@ export default function TestsPage() {
   const deletionCompletedCount = deletionAttempts.filter((attempt) =>
     ["submitted", "expired"].includes(attempt.status),
   ).length;
+  const questionAnswerLocked = Boolean(
+    questionToEdit &&
+      state.tests.some(
+        (test) =>
+          state.assignments.some((assignment) => assignment.testId === test.id) &&
+          test.modules.some((module) =>
+            module.questions.some(
+              (placement) => placement.questionId === questionToEdit.id,
+            ),
+          ),
+      ),
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -276,7 +291,7 @@ export default function TestsPage() {
       availableAt: availableAt.toISOString(),
       dueAt: dueAt.toISOString(),
       attemptLimit: state.settings.defaultAttemptLimit,
-      feedbackPolicy,
+      feedbackPolicy: "after_submission",
       allowResume: state.settings.defaultAllowResume,
       status: "open",
     };
@@ -288,7 +303,6 @@ export default function TestsPage() {
 
   function openAssignmentDialog() {
     setSelectedStudentIds(activeStudents.map((student) => student.id));
-    setFeedbackPolicy(state.settings.defaultFeedbackPolicy);
     setStudentSearch("");
     setAssignmentOpen(true);
   }
@@ -364,19 +378,57 @@ export default function TestsPage() {
     }
   }
 
+  function openQuestionEditor(question: Question) {
+    setQuestionToEdit({ ...question });
+    setQuestionAnswer(
+      question.acceptedAnswers.map((answer) => answer.value).join(", "),
+    );
+  }
+
+  function saveQuestionEdits() {
+    if (!questionToEdit) return;
+    const answerValues =
+      questionToEdit.responseType === "multiple_choice"
+        ? [questionAnswer.trim().toUpperCase()]
+        : questionAnswer.split(",");
+    const acceptedAnswers = makeAcceptedAnswers(answerValues);
+    if (
+      !questionToEdit.domain.trim() ||
+      !questionToEdit.skill.trim() ||
+      !acceptedAnswers.length
+    ) {
+      return;
+    }
+    updateQuestion(questionToEdit.id, {
+      domain: questionToEdit.domain.trim(),
+      skill: questionToEdit.skill.trim(),
+      difficulty: questionToEdit.difficulty,
+      ...(questionAnswerLocked ? {} : { acceptedAnswers }),
+    });
+    setQuestionToEdit(null);
+  }
+
   return (
     <>
       <PageHeader
         eyebrow="Authoring"
         title="Tests & assignments"
-        description="Build fixed SAT-style work types from your question bank, then assign them to specific students."
+        description="Create questions, build one of the six test types, and assign it to students."
         actions={
-          <Button
-            icon={<Plus className="h-4 w-4" />}
-            onClick={() => setBuilderOpen(true)}
-          >
-            Build test
-          </Button>
+          <>
+            <Link
+              href="/tutor/import/manual"
+              className="focus-ring inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-bold hover:bg-slate-50"
+            >
+              <Plus className="h-4 w-4" /> Add question
+            </Link>
+            <Button
+              icon={<Plus className="h-4 w-4" />}
+              onClick={() => setBuilderOpen(true)}
+            >
+              Build test
+            </Button>
+          </>
         }
       />
 
@@ -493,7 +545,9 @@ export default function TestsPage() {
                           <div>
                             <p className="font-extrabold">{module.title}</p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {module.durationMinutes} minutes ·{" "}
+                              {module.durationMinutes === null
+                                ? "Unlimited time"
+                                : `${module.durationMinutes} minutes`} ·{" "}
                               {module.questions.length} question
                               {module.questions.length === 1 ? "" : "s"}
                               {template
@@ -504,43 +558,88 @@ export default function TestsPage() {
                           <Badge tone="blue">{module.section}</Badge>
                         </div>
 
-                        {activeTest.workType === "custom" && !activeTestAssigned && (
+                        {!activeTestAssigned && (
                           <div className="grid gap-3 border-b p-4 sm:grid-cols-2">
+                            {activeTest.workType === "custom" && (
+                              <div>
+                                <FieldLabel htmlFor={`section-${module.id}`}>
+                                  Section
+                                </FieldLabel>
+                                <Select
+                                  id={`section-${module.id}`}
+                                  value={module.section}
+                                  onChange={(event) =>
+                                    updateModule(module.id, {
+                                      section: event.target
+                                        .value as Question["section"],
+                                      questions: [],
+                                    })
+                                  }
+                                >
+                                  <option>Math</option>
+                                  <option>Reading and Writing</option>
+                                </Select>
+                              </div>
+                            )}
                             <div>
-                              <FieldLabel htmlFor={`section-${module.id}`}>
-                                Section
-                              </FieldLabel>
-                              <Select
-                                id={`section-${module.id}`}
-                                value={module.section}
-                                onChange={(event) =>
-                                  updateModule(module.id, {
-                                    section: event.target
-                                      .value as Question["section"],
-                                    questions: [],
-                                  })
-                                }
-                              >
-                                <option>Math</option>
-                                <option>Reading and Writing</option>
-                              </Select>
-                            </div>
-                            <div>
-                              <FieldLabel htmlFor={`duration-${module.id}`}>
-                                Minutes
-                              </FieldLabel>
-                              <Input
-                                id={`duration-${module.id}`}
-                                type="number"
-                                min={1}
-                                max={240}
-                                value={module.durationMinutes}
-                                onChange={(event) =>
-                                  updateModule(module.id, {
-                                    durationMinutes: Number(event.target.value),
-                                  })
-                                }
-                              />
+                              <FieldLabel>Time limit</FieldLabel>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="inline-flex rounded-lg border bg-slate-50 p-1">
+                                  <button
+                                    type="button"
+                                    className={`rounded-md px-3 py-2 text-sm font-bold ${
+                                      module.durationMinutes !== null
+                                        ? "bg-white text-[var(--navy)] shadow-sm"
+                                        : "text-slate-500"
+                                    }`}
+                                    onClick={() =>
+                                      updateModule(module.id, {
+                                        durationMinutes:
+                                          template?.durationMinutes ?? 20,
+                                      })
+                                    }
+                                  >
+                                    Timed
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`rounded-md px-3 py-2 text-sm font-bold ${
+                                      module.durationMinutes === null
+                                        ? "bg-white text-[var(--navy)] shadow-sm"
+                                        : "text-slate-500"
+                                    }`}
+                                    onClick={() =>
+                                      updateModule(module.id, {
+                                        durationMinutes: null,
+                                      })
+                                    }
+                                  >
+                                    Unlimited
+                                  </button>
+                                </div>
+                                {module.durationMinutes !== null && (
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      id={`duration-${module.id}`}
+                                      className="w-24"
+                                      type="number"
+                                      min={1}
+                                      max={240}
+                                      value={module.durationMinutes}
+                                      onChange={(event) =>
+                                        updateModule(module.id, {
+                                          durationMinutes: Number(
+                                            event.target.value,
+                                          ),
+                                        })
+                                      }
+                                    />
+                                    <span className="text-sm font-semibold text-slate-500">
+                                      min
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         )}
@@ -569,6 +668,17 @@ export default function TestsPage() {
                                       : "SPR"}
                                   </p>
                                 </div>
+                                {question && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    icon={<Pencil className="h-4 w-4" />}
+                                    disabled={activeTestAssigned}
+                                    onClick={() => openQuestionEditor(question)}
+                                  >
+                                    Edit
+                                  </Button>
+                                )}
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -768,27 +878,6 @@ export default function TestsPage() {
                             })
                           }
                         />
-                      </div>
-                      <div>
-                        <FieldLabel htmlFor={`policy-${assignment.id}`}>
-                          Feedback
-                        </FieldLabel>
-                        <Select
-                          id={`policy-${assignment.id}`}
-                          value={assignment.feedbackPolicy}
-                          onChange={(event) =>
-                            updateAssignment(assignment.id, {
-                              feedbackPolicy:
-                                event.target.value as FeedbackPolicy,
-                            })
-                          }
-                        >
-                          <option value="immediate">Immediate</option>
-                          <option value="after_submission">
-                            After submission
-                          </option>
-                          <option value="tutor_release">Tutor release</option>
-                        </Select>
                       </div>
                       <div>
                         <FieldLabel htmlFor={`status-${assignment.id}`}>
@@ -1047,6 +1136,127 @@ export default function TestsPage() {
         </Dialog.Portal>
       </Dialog.Root>
 
+      <Dialog.Root
+        open={Boolean(questionToEdit)}
+        onOpenChange={(open) => {
+          if (!open) setQuestionToEdit(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
+            <Dialog.Close
+              aria-label="Close"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-lg hover:bg-slate-100"
+            >
+              <X className="h-5 w-5" />
+            </Dialog.Close>
+            <Dialog.Title className="text-xl font-black">
+              Edit {questionToEdit?.sourceId}
+            </Dialog.Title>
+            <Dialog.Description className="mt-1 text-sm text-slate-500">
+              Update the question details and answer key used for scoring.
+            </Dialog.Description>
+
+            {questionToEdit && (
+              <div className="mt-5 space-y-4">
+                <div>
+                  <FieldLabel htmlFor="edit-question-domain">Domain</FieldLabel>
+                  <Input
+                    id="edit-question-domain"
+                    value={questionToEdit.domain}
+                    onChange={(event) =>
+                      setQuestionToEdit((current) =>
+                        current ? { ...current, domain: event.target.value } : null,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <FieldLabel htmlFor="edit-question-skill">Skill</FieldLabel>
+                  <Input
+                    id="edit-question-skill"
+                    value={questionToEdit.skill}
+                    onChange={(event) =>
+                      setQuestionToEdit((current) =>
+                        current ? { ...current, skill: event.target.value } : null,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <FieldLabel htmlFor="edit-question-difficulty">
+                    Difficulty
+                  </FieldLabel>
+                  <Select
+                    id="edit-question-difficulty"
+                    value={questionToEdit.difficulty}
+                    onChange={(event) =>
+                      setQuestionToEdit((current) =>
+                        current
+                          ? {
+                              ...current,
+                              difficulty: event.target
+                                .value as Question["difficulty"],
+                            }
+                          : null,
+                      )
+                    }
+                  >
+                    <option>Easy</option>
+                    <option>Medium</option>
+                    <option>Hard</option>
+                  </Select>
+                </div>
+                <div>
+                  <FieldLabel htmlFor="edit-question-answer">
+                    Correct answer
+                  </FieldLabel>
+                  {questionToEdit.responseType === "multiple_choice" ? (
+                    <Select
+                      id="edit-question-answer"
+                      value={questionAnswer}
+                      disabled={questionAnswerLocked}
+                      onChange={(event) => setQuestionAnswer(event.target.value)}
+                    >
+                      {["A", "B", "C", "D"].map((answer) => (
+                        <option key={answer}>{answer}</option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Input
+                      id="edit-question-answer"
+                      value={questionAnswer}
+                      disabled={questionAnswerLocked}
+                      onChange={(event) => setQuestionAnswer(event.target.value)}
+                      placeholder="Separate accepted answers with commas"
+                    />
+                  )}
+                  {questionAnswerLocked && (
+                    <p className="mt-2 text-xs font-semibold text-amber-700">
+                      The answer key is locked because this question has
+                      assignment history.
+                    </p>
+                  )}
+                </div>
+                <Button
+                  className="w-full"
+                  icon={<Check className="h-4 w-4" />}
+                  disabled={
+                    !questionToEdit.domain.trim() ||
+                    !questionToEdit.skill.trim() ||
+                    !questionAnswer.trim()
+                  }
+                  onClick={saveQuestionEdits}
+                >
+                  Save question
+                </Button>
+              </div>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
       <Dialog.Root open={builderOpen} onOpenChange={setBuilderOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/45" />
@@ -1245,20 +1455,6 @@ export default function TestsPage() {
                   </p>
                 )}
               </div>
-            </div>
-            <div className="mt-4">
-              <FieldLabel htmlFor="feedback-release">Feedback release</FieldLabel>
-              <Select
-                id="feedback-release"
-                value={feedbackPolicy}
-                onChange={(event) =>
-                  setFeedbackPolicy(event.target.value as FeedbackPolicy)
-                }
-              >
-                <option value="immediate">Immediately during practice</option>
-                <option value="after_submission">After submission</option>
-                <option value="tutor_release">Only when tutor releases</option>
-              </Select>
             </div>
             <Button
               className="mt-6 w-full"

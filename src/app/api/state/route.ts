@@ -411,7 +411,10 @@ export async function GET() {
         id: text(module.id),
         title: text(module.title),
         section: text(module.section) as Question["section"],
-        durationMinutes: number(module.duration_minutes),
+        durationMinutes:
+          module.duration_minutes === null
+            ? null
+            : number(module.duration_minutes),
         route: text(module.route) as "common" | "easier" | "harder",
         order: number(module.module_order),
         questions: moduleQuestionRows

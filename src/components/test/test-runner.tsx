@@ -317,13 +317,18 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         const saved = localStorage.getItem(recoveryKey);
         if (saved) {
           const recovery = JSON.parse(saved) as RecoveryState;
+          const recoveryModule = modules[recovery.moduleIndex];
           if (
-            recovery.deadline > Date.now() &&
-            modules[recovery.moduleIndex]
+            recoveryModule &&
+            ((recoveryModule.durationMinutes === null &&
+              recovery.deadline === -1) ||
+              recovery.deadline > Date.now())
           ) {
             setDeadline(recovery.deadline);
             setRemainingSeconds(
-              Math.ceil((recovery.deadline - Date.now()) / 1000),
+              recovery.deadline === -1
+                ? 0
+                : Math.ceil((recovery.deadline - Date.now()) / 1000),
             );
             setModuleIndex(recovery.moduleIndex);
             setQuestionIndex(recovery.questionIndex);
@@ -349,14 +354,18 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
       );
       const restoredDeadline = existingAttempt.serverDeadline
         ? new Date(existingAttempt.serverDeadline).getTime()
-        : Date.now() + (existingAttempt.remainingSeconds ?? 0) * 1000;
-      if (restoredDeadline <= Date.now()) return;
+        : modules[restoredModuleIndex]?.durationMinutes === null
+          ? -1
+          : Date.now() + (existingAttempt.remainingSeconds ?? 0) * 1000;
+      if (restoredDeadline !== -1 && restoredDeadline <= Date.now()) return;
 
       setModuleIndex(restoredModuleIndex);
       setQuestionIndex(existingAttempt.currentQuestionIndex);
       setDeadline(restoredDeadline);
       setRemainingSeconds(
-        Math.max(0, Math.ceil((restoredDeadline - Date.now()) / 1000)),
+        restoredDeadline === -1
+          ? 0
+          : Math.max(0, Math.ceil((restoredDeadline - Date.now()) / 1000)),
       );
       setResponseValues(
         Object.fromEntries(
@@ -449,11 +458,13 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   useEffect(() => {
     if (
       stage === "launch" &&
-      deadline > Date.now() &&
+      (deadline === -1 || deadline > Date.now()) &&
       assetLoad.status === "ready"
     ) {
       const timer = window.setTimeout(() => {
-        setRemainingSeconds(Math.ceil((deadline - Date.now()) / 1000));
+        setRemainingSeconds(
+          deadline === -1 ? 0 : Math.ceil((deadline - Date.now()) / 1000),
+        );
         setStage("testing");
       }, 0);
       return () => window.clearTimeout(timer);
@@ -570,12 +581,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
           responses,
           startedAt:
             existingAttempt?.startedAt ??
-            new Date(
-              deadline -
-                (activeModule?.durationMinutes ?? 20) *
-                  60_000 *
-                  (student.timeMultiplier ?? 1),
-            ).toISOString(),
+            (activeModule?.durationMinutes === null
+              ? new Date().toISOString()
+              : new Date(
+                  deadline -
+                    (activeModule?.durationMinutes ?? 20) *
+                      60_000 *
+                      (student.timeMultiplier ?? 1),
+                ).toISOString()),
           submittedAt: serverResult?.submittedAt ?? new Date().toISOString(),
           lastHeartbeatAt: new Date().toISOString(),
           rawCorrect: serverResult
@@ -585,9 +598,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
           scoreSummary:
             serverResult?.scoreSummary ??
             buildScoreSummary(test, allQuestions, responses),
-          released:
-            serverResult?.released ??
-            assignment.feedbackPolicy !== "tutor_release",
+          released: serverResult?.released ?? true,
         };
         upsertAttempt(attempt);
         setSubmittedAttempt(attempt);
@@ -628,7 +639,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
   );
 
   useEffect(() => {
-    if (stage !== "testing" || !deadline) return;
+    if (stage !== "testing" || deadline <= 0) return;
     const update = () => {
       const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       setRemainingSeconds(remaining);
@@ -649,10 +660,10 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         snapshot.flagged,
         snapshot.eliminated,
       );
-      const currentRemainingSeconds = Math.max(
-        0,
-        Math.ceil((deadline - Date.now()) / 1000),
-      );
+      const currentRemainingSeconds =
+        activeModule.durationMinutes === null
+          ? undefined
+          : Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       const localAttempt: Attempt = {
         id:
           attemptId === "demo"
@@ -665,15 +676,22 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         currentQuestionIndex: snapshot.questionIndex,
         answeredCount: snapshot.answeredCount,
         remainingSeconds: currentRemainingSeconds,
-        serverDeadline: new Date(deadline).toISOString(),
+        serverDeadline:
+          activeModule.durationMinutes === null
+            ? undefined
+            : new Date(deadline).toISOString(),
         connectionStatus: snapshot.online ? "online" : "offline",
         responses,
-        startedAt: new Date(
-          deadline -
-            activeModule.durationMinutes *
-              60_000 *
-              (student.timeMultiplier ?? 1),
-        ).toISOString(),
+        startedAt:
+          existingAttempt?.startedAt ??
+          (activeModule.durationMinutes === null
+            ? new Date().toISOString()
+            : new Date(
+                deadline -
+                  activeModule.durationMinutes *
+                    60_000 *
+                    (student.timeMultiplier ?? 1),
+              ).toISOString()),
         lastHeartbeatAt: new Date().toISOString(),
         released: false,
       };
@@ -709,6 +727,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     activeModule,
     assignment,
     deadline,
+    existingAttempt?.startedAt,
     production,
     serverAttemptId,
     stage,
@@ -762,12 +781,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
     setStarting(true);
     try {
       let nextDeadline =
-        deadline > Date.now()
-          ? deadline
-          : Date.now() +
-            activeModule.durationMinutes *
-              60_000 *
-              (student.timeMultiplier ?? 1);
+        activeModule.durationMinutes === null
+          ? -1
+          : deadline > Date.now()
+            ? deadline
+            : Date.now() +
+              activeModule.durationMinutes *
+                60_000 *
+                (student.timeMultiplier ?? 1);
       if (production) {
         const response = await fetch("/api/attempts/start", {
           method: "POST",
@@ -780,17 +801,23 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
         });
         const payload = (await response.json()) as {
           attemptId?: string;
-          deadline?: string;
+          deadline?: string | null;
           error?: string;
         };
-        if (!response.ok || !payload.attemptId || !payload.deadline) {
+        if (!response.ok || !payload.attemptId) {
           throw new Error(payload.error ?? "The module could not be started.");
         }
         setServerAttemptId(payload.attemptId);
-        nextDeadline = new Date(payload.deadline).getTime();
+        nextDeadline = payload.deadline
+          ? new Date(payload.deadline).getTime()
+          : -1;
       }
       setDeadline(nextDeadline);
-      setRemainingSeconds(Math.ceil((nextDeadline - Date.now()) / 1000));
+      setRemainingSeconds(
+        nextDeadline === -1
+          ? 0
+          : Math.ceil((nextDeadline - Date.now()) / 1000),
+      );
       setSyncError("");
       setStage("testing");
     } catch (error) {
@@ -1041,10 +1068,12 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                       Time
                     </p>
                     <p className="mt-2 text-xl font-black">
-                      {Math.round(
-                        activeModule.durationMinutes * student.timeMultiplier,
-                      )}{" "}
-                      min
+                      {activeModule.durationMinutes === null
+                        ? "Unlimited"
+                        : `${Math.round(
+                            activeModule.durationMinutes *
+                              student.timeMultiplier,
+                          )} min`}
                     </p>
                   </div>
                   <div className="rounded-xl bg-slate-50 p-4">
@@ -1058,8 +1087,9 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 </div>
                 <div className="mt-5 rounded-xl border p-4 text-sm leading-6 text-slate-600">
                   Responses save automatically in this browser and synchronize
-                  through a heartbeat. The timer is based on an absolute
-                  deadline and continues if the connection drops.
+                  through a heartbeat. {activeModule.durationMinutes === null
+                    ? "This module has no countdown or automatic expiry."
+                    : "The timer is based on an absolute deadline and continues if the connection drops."}
                 </div>
                 <div className="mt-4 grid gap-2 rounded-xl bg-blue-50 p-4 text-sm font-semibold text-blue-900">
                   <p>Before starting, confirm:</p>
@@ -1181,7 +1211,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                       : `Break ends in ${formatDuration(breakRemainingSeconds)}`
                     : assetLoad.status === "loading"
                       ? `Preparing ${assetLoad.loaded}/${assetLoad.total}`
-                      : deadline > 0
+                      : deadline !== 0
                       ? "Resume module"
                       : "Start module"}
                 <ArrowRight className="h-5 w-5" />
@@ -1217,15 +1247,13 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
               <CheckCircle2 className="h-10 w-10 text-emerald-300" />
               <h1 className="mt-5 text-3xl font-black">Assignment submitted</h1>
               <p className="mt-2 text-blue-100">
-                {released
-                  ? "Your tutor has allowed results after submission."
-                  : "Your tutor will release results when review is complete."}
+                Your score and corrections are ready.
               </p>
             </div>
             <div className="p-7">
               {released ? (
                 <>
-                  <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="max-w-xs">
                     <div className="rounded-xl bg-slate-50 p-5">
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
                         Correct
@@ -1234,47 +1262,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                         {summary.rawCorrect} / {summary.rawTotal}
                       </p>
                     </div>
-                    <div className="rounded-xl bg-slate-50 p-5">
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                        Accuracy
-                      </p>
-                      <p className="mt-2 text-3xl font-black">
-                        {Math.round(summary.accuracy * 100)}%
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-50 p-5">
-                      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                        Estimated SAT
-                      </p>
-                      <p className="mt-2 text-3xl font-black">
-                        {summary.estimatedScoreRange
-                          ? `${summary.estimatedScoreRange[0]}-${summary.estimatedScoreRange[1]}`
-                          : "N/A"}
-                      </p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">
-                        {summary.label}
-                      </p>
-                    </div>
                   </div>
-                  {summary.sections.length > 0 && (
-                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                      {summary.sections.map((section) => (
-                        <div
-                          key={section.section}
-                          className="rounded-xl border bg-white p-4"
-                        >
-                          <p className="text-sm font-black">
-                            {section.section}
-                          </p>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">
-                            {section.rawCorrect}/{section.rawTotal} correct ·{" "}
-                            {section.estimatedScoreRange[0]}-
-                            {section.estimatedScoreRange[1]} estimated
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                   <div className="mt-7 space-y-5">
                     {allQuestions.map((question, index) => {
                       const response = responseMap.get(question.id);
@@ -1288,7 +1276,7 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                               {correct ? "Correct" : "Review"}
                             </Badge>
                           </div>
-                          <div className="mb-4 grid gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-4">
+                          <div className="mb-4 grid gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-2">
                             <div>
                               <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
                                 Your answer
@@ -1307,31 +1295,6 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                                   .join(", ") || "Not configured"}
                               </p>
                             </div>
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                                Timing
-                              </p>
-                              <p className="mt-1 font-black">
-                                {formatDuration(response?.secondsSpent ?? 0)}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                                Flag
-                              </p>
-                              <p className="mt-1 font-black">
-                                {response?.flagged ? "Marked" : "Not marked"}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="space-y-3">
-                            {question.rationaleAssets.map((asset) => (
-                              <QuestionAssetImage
-                                key={asset.id}
-                                asset={asset}
-                                alt={`Rationale for question ${index + 1}`}
-                              />
-                            ))}
                           </div>
                         </div>
                       );
@@ -1382,20 +1345,31 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             <p className="text-xs text-slate-500">{activeModule.section}</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setTimerHidden((value) => !value)}
-          className={cn(
-            "focus-ring inline-flex items-center gap-2 rounded-xl px-3 py-2 font-mono text-sm font-black",
-            remainingSeconds <= 300
-              ? "bg-amber-50 text-amber-800"
-              : "bg-slate-100 text-[var(--navy-dark)]",
-          )}
-          aria-label={timerHidden ? "Show timer" : "Hide timer"}
-        >
-          {timerHidden ? <EyeOff className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
-          {timerHidden ? "Timer hidden" : formatDuration(remainingSeconds)}
-        </button>
+        {activeModule.durationMinutes === null ? (
+          <div className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-black text-[var(--navy-dark)]">
+            <Clock3 className="h-4 w-4" />
+            Unlimited
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setTimerHidden((value) => !value)}
+            className={cn(
+              "focus-ring inline-flex items-center gap-2 rounded-xl px-3 py-2 font-mono text-sm font-black",
+              remainingSeconds <= 300
+                ? "bg-amber-50 text-amber-800"
+                : "bg-slate-100 text-[var(--navy-dark)]",
+            )}
+            aria-label={timerHidden ? "Show timer" : "Hide timer"}
+          >
+            {timerHidden ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Clock3 className="h-4 w-4" />
+            )}
+            {timerHidden ? "Timer hidden" : formatDuration(remainingSeconds)}
+          </button>
+        )}
         <div className="flex items-center gap-2">
           <Badge tone={online && !syncError ? "green" : "rose"}>
             {online ? (
@@ -2047,11 +2021,12 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
           <Dialog.Overlay className="fixed inset-0 z-[150] bg-slate-950/45" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[151] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-6 shadow-2xl">
             <Dialog.Title className="text-xl font-black">
-              Exit this timed module?
+              Exit this module?
             </Dialog.Title>
             <Dialog.Description className="mt-2 text-sm leading-6 text-slate-600">
-              Your answers are saved, but the timer will continue while you are
-              on the dashboard. Return before the deadline to keep working.
+              {activeModule.durationMinutes === null
+                ? "Your answers are saved. You can return from the dashboard and continue later."
+                : "Your answers are saved, but the timer will continue while you are on the dashboard. Return before the deadline to keep working."}
             </Dialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close asChild>

@@ -56,7 +56,7 @@ describe("work type templates", () => {
     expect(validateTestForAssignment(test).errors[0]).toContain("1-49");
   });
 
-  it("strictly validates SAT-style module counts and durations", () => {
+  it("validates SAT-style module counts while allowing custom timing", () => {
     const test = testWithModules("math_practice");
     expect(validateTestForAssignment(test).valid).toBe(false);
 
@@ -67,7 +67,10 @@ describe("work type templates", () => {
     expect(validateTestForAssignment(test)).toMatchObject({ valid: true });
 
     test.modules[0].durationMinutes = 20;
-    expect(validateTestForAssignment(test).errors[0]).toContain("35 minutes");
+    expect(validateTestForAssignment(test)).toMatchObject({ valid: true });
+
+    test.modules[0].durationMinutes = null;
+    expect(validateTestForAssignment(test)).toMatchObject({ valid: true });
   });
 
   it("rejects duplicate question placements across modules", () => {

@@ -47,6 +47,10 @@ export function persistQuestionChanges(
     skill: changes.skill,
     difficulty: changes.difficulty,
     tags: changes.tags,
+    acceptedAnswers: changes.acceptedAnswers?.map((answer) => ({
+      value: answer.value,
+      normalizedValue: answer.normalizedValue,
+    })),
   });
 }
 

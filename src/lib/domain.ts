@@ -75,7 +75,7 @@ export type TestModule = {
   id: string;
   title: string;
   section: Section;
-  durationMinutes: number;
+  durationMinutes: number | null;
   route: "common" | "easier" | "harder";
   order: number;
   questions: TestQuestion[];

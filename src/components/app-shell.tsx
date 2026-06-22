@@ -3,11 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Activity,
-  BarChart3,
   BookOpenCheck,
   ChevronLeft,
-  FileUp,
   GraduationCap,
   House,
   LayoutDashboard,
@@ -17,7 +14,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   KeyRound,
-  Settings,
   Users,
   X,
 } from "lucide-react";
@@ -30,19 +26,13 @@ import {
 import { cn } from "@/lib/utils";
 
 const tutorLinks = [
-  { href: "/tutor", label: "Overview", icon: LayoutDashboard },
-  { href: "/tutor/import", label: "Import questions", icon: FileUp },
-  { href: "/tutor/questions", label: "Question library", icon: BookOpenCheck },
-  { href: "/tutor/students", label: "Students", icon: Users },
   { href: "/tutor/tests", label: "Tests & assignments", icon: GraduationCap },
-  { href: "/tutor/monitor", label: "Live monitor", icon: Activity },
-  { href: "/tutor/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/tutor/settings", label: "Settings", icon: Settings },
+  { href: "/tutor/students", label: "Student accounts", icon: Users },
 ];
 
 const studentLinks = [
   { href: "/student", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/student/results", label: "My results", icon: BarChart3 },
+  { href: "/student/results", label: "My results", icon: BookOpenCheck },
 ];
 
 export function AppShell({

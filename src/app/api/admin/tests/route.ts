@@ -26,7 +26,7 @@ const testSchema = z.object({
       id: z.string().uuid(),
       title: z.string().min(1).max(160),
       section: z.enum(["Math", "Reading and Writing"]),
-      durationMinutes: z.number().int().min(1).max(240),
+      durationMinutes: z.number().int().min(1).max(240).nullable(),
       route: z.enum(["common", "easier", "harder"]),
       order: z.number().int().min(1),
       questions: z.array(

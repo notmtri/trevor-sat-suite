@@ -256,9 +256,9 @@ export async function POST(request: Request) {
   }
   const expired =
     parsed.data.expired ||
-    !attempt.server_deadline ||
-    new Date(attempt.server_deadline).getTime() <= now.getTime();
-  const released = assignment.feedback_policy !== "tutor_release";
+    (Boolean(attempt.server_deadline) &&
+      new Date(attempt.server_deadline).getTime() <= now.getTime());
+  const released = true;
   const { error: updateError } = await admin
     .from("attempts")
     .update({

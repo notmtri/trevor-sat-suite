@@ -108,6 +108,24 @@ export async function POST(request: Request) {
     attempt = result.data;
   }
 
+  if (
+    attempt?.status === "in_progress" &&
+    attempt.current_module_id === testModule.id &&
+    testModule.duration_minutes === null
+  ) {
+    if (!assignment.allow_resume) {
+      return NextResponse.json(
+        { error: "This assignment does not allow a module to be resumed." },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({
+      attemptId: attempt.id,
+      deadline: null,
+      serverNow: now.toISOString(),
+    });
+  }
+
   if (attempt?.status === "in_progress" && attempt.server_deadline) {
     const existingDeadline = new Date(attempt.server_deadline);
     if (
@@ -164,10 +182,16 @@ export async function POST(request: Request) {
     }
   }
 
-  const durationMs =
-    testModule.duration_minutes * 60_000 * Number(recipient.time_multiplier);
-  const deadline = new Date(now.getTime() + durationMs);
-  if (deadline > new Date(effectiveDueAt)) {
+  const deadline =
+    testModule.duration_minutes === null
+      ? null
+      : new Date(
+          now.getTime() +
+            testModule.duration_minutes *
+              60_000 *
+              Number(recipient.time_multiplier),
+        );
+  if (deadline && deadline > new Date(effectiveDueAt)) {
     deadline.setTime(new Date(effectiveDueAt).getTime());
   }
 
@@ -178,7 +202,7 @@ export async function POST(request: Request) {
         status: "in_progress",
         current_module_id: testModule.id,
         current_question_index: 0,
-        server_deadline: deadline.toISOString(),
+        server_deadline: deadline?.toISOString() ?? null,
         connection_status: "online",
         started_at: attempt.started_at ?? now.toISOString(),
         last_heartbeat_at: now.toISOString(),
@@ -199,7 +223,7 @@ export async function POST(request: Request) {
         student_id: user.id,
         status: "in_progress",
         current_module_id: testModule.id,
-        server_deadline: deadline.toISOString(),
+        server_deadline: deadline?.toISOString() ?? null,
         connection_status: "online",
         started_at: now.toISOString(),
         last_heartbeat_at: now.toISOString(),
@@ -219,7 +243,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     attemptId: attempt.id,
-    deadline: deadline.toISOString(),
+    deadline: deadline?.toISOString() ?? null,
     serverNow: now.toISOString(),
   });
 }

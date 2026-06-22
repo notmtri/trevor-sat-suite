@@ -150,7 +150,8 @@ async function loadOwnedTest(
     id: module.id as string,
     title: module.title as string,
     section: module.section as TestModule["section"],
-    durationMinutes: Number(module.duration_minutes),
+    durationMinutes:
+      module.duration_minutes === null ? null : Number(module.duration_minutes),
     route: module.route as TestModule["route"],
     order: Number(module.module_order),
     questions: (placements ?? [])

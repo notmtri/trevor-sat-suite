@@ -143,7 +143,7 @@ describe("assignment lifecycle helpers", () => {
     expect(cards).toEqual([]);
   });
 
-  it("keeps released archived results and hides unreleased archived attempts", () => {
+  it("keeps scored archived results without a tutor release step", () => {
     const releasedAttempt: Attempt = {
       id: "attempt-released",
       assignmentId: assignment.id,
@@ -172,6 +172,7 @@ describe("assignment lifecycle helpers", () => {
 
     expect(result.released.map((attempt) => attempt.id)).toEqual([
       "attempt-released",
+      "attempt-unreleased",
     ]);
     expect(result.unreleased).toEqual([]);
   });

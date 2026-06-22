@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Attempt is not active." }, { status: 409 });
   }
   if (
-    !attempt.server_deadline ||
+    attempt.server_deadline &&
     new Date(attempt.server_deadline).getTime() <= now.getTime()
   ) {
     await admin

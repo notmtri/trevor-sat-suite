@@ -196,7 +196,12 @@ export function validateTestForAssignment(test: TestDefinition) {
     if (!commonModules.length) {
       errors.push("Custom work needs at least one module.");
     }
-    if (commonModules.some((module) => module.durationMinutes < 1)) {
+    if (
+      commonModules.some(
+        (module) =>
+          module.durationMinutes !== null && module.durationMinutes < 1,
+      )
+    ) {
       errors.push("Each custom module needs a positive time limit.");
     }
     return { valid: errors.length === 0, errors };
@@ -211,9 +216,6 @@ export function validateTestForAssignment(test: TestDefinition) {
     if (!testModule) return;
     if (testModule.section !== expected.section) {
       errors.push(`${expected.title} must be ${expected.section}.`);
-    }
-    if (testModule.durationMinutes !== expected.durationMinutes) {
-      errors.push(`${expected.title} must be ${expected.durationMinutes} minutes.`);
     }
     if (testModule.questions.length !== expected.questionCount) {
       errors.push(
