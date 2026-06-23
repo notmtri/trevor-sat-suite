@@ -11,6 +11,7 @@ import type {
   TestDefinition,
   WorkType,
 } from "@/lib/domain";
+import { normalizeQuestionContent } from "@/lib/question-content";
 import { normalizeTutorSettings } from "@/lib/settings";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -339,6 +340,7 @@ export async function GET() {
             value: text(answer.value),
             normalizedValue: text(answer.normalized_value),
           })),
+        content: normalizeQuestionContent(version.content),
         promptAssets: mappedAssets.filter((asset) => asset.kind === "prompt"),
         rationaleAssets: mappedAssets.filter(
           (asset) => asset.kind === "rationale",

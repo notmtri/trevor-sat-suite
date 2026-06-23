@@ -1,7 +1,7 @@
 "use client";
 
 import { PageHeader } from "@/components/page-header";
-import { QuestionAssetImage } from "@/components/question-asset-image";
+import { QuestionContentView } from "@/components/question-content-view";
 import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -98,18 +98,12 @@ export default function StudentResultsPage() {
                       </Badge>
                     </div>
 
-                    {item.question.promptAssets.length > 0 && (
-                      <div className="mt-4 space-y-3">
-                        {item.question.promptAssets.map((asset) => (
-                          <QuestionAssetImage
-                            key={asset.id}
-                            asset={asset}
-                            alt={`Question ${index + 1}`}
-                            className="rounded-lg border bg-white"
-                          />
-                        ))}
-                      </div>
-                    )}
+                    <QuestionContentView
+                      question={item.question}
+                      imageAlt={`Question ${index + 1}`}
+                      showChoices
+                      className="mt-4"
+                    />
 
                     <div className="mt-4 grid gap-3 rounded-lg bg-slate-50 p-4 text-sm sm:grid-cols-2">
                       <p>

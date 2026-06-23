@@ -87,6 +87,7 @@ export async function persistQuestionImport(
           source_document_id: sourceDocument.id,
           version_hash: question.versionHash,
           response_type: question.responseType,
+          content: question.content ?? {},
           extracted_text: question.extractedText,
           review_notes: question.reviewNotes ?? "",
         })
@@ -215,6 +216,7 @@ export async function persistManualQuestion(question: Question) {
         source_document_id: sourceDocument.id,
         version_hash: question.versionHash,
         response_type: question.responseType,
+        content: question.content ?? {},
         extracted_text: question.extractedText,
         review_notes: question.reviewNotes ?? "",
       })

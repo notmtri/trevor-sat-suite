@@ -7,6 +7,7 @@ import {
   Check,
   FileImage,
   ImagePlus,
+  Plus,
   Upload,
   X,
 } from "lucide-react";
@@ -16,11 +17,25 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FieldLabel, Input, Select, Textarea } from "@/components/ui/field";
-import type { Difficulty, Question, ResponseType, Section } from "@/lib/domain";
+import type {
+  ChoiceLabel,
+  Difficulty,
+  Question,
+  QuestionContent,
+  ResponseType,
+  Section,
+  TestModule,
+} from "@/lib/domain";
 import {
   createManualQuestionAsset,
   validateQuestionImage,
 } from "@/lib/manual-question";
+import {
+  CHOICE_LABELS,
+  compactQuestionContent,
+  normalizeQuestionContent,
+  validateQuestionContent,
+} from "@/lib/question-content";
 import { makeAcceptedAnswers } from "@/lib/scoring";
 import {
   isDemoMode,
@@ -28,6 +43,15 @@ import {
 } from "@/lib/supabase/client";
 import { persistManualQuestion } from "@/lib/supabase/question-import";
 import { sha256 } from "@/lib/utils";
+
+type ReturnTarget = {
+  testId: string;
+  moduleId: string;
+};
+
+function sortModuleQuestions(module: TestModule) {
+  return [...module.questions].sort((a, b) => a.order - b.order);
+}
 
 function ImageUploadField({
   id,
@@ -80,7 +104,7 @@ function ImageUploadField({
         className="focus-within:ring-3 focus-within:ring-blue-200 block cursor-pointer overflow-hidden rounded-xl border-2 border-dashed bg-slate-50 transition hover:border-slate-400"
       >
         {preview ? (
-          // This is a temporary local preview before the asset enters the question library.
+          // Local preview before the asset enters the question library.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={preview}
@@ -110,7 +134,7 @@ function ImageUploadField({
       </label>
       {file && (
         <p className="mt-2 truncate text-xs font-semibold text-slate-500">
-          {file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB
+          {file.name} - {(file.size / 1024 / 1024).toFixed(2)} MB
         </p>
       )}
     </div>
@@ -119,26 +143,82 @@ function ImageUploadField({
 
 export default function ManualQuestionImportPage() {
   const router = useRouter();
-  const { state, addQuestions } = useAppState();
+  const { state, addQuestions, updateTest } = useAppState();
+  const [returnTarget, setReturnTarget] = useState<ReturnTarget | null>(null);
+  const [targetSectionApplied, setTargetSectionApplied] = useState(false);
   const [sourceId, setSourceId] = useState("");
-  const [section, setSection] = useState<Section>("Math");
+  const [section, setSection] = useState<Section>("Reading and Writing");
   const [domain, setDomain] = useState("");
   const [skill, setSkill] = useState("");
   const [difficulty, setDifficulty] = useState<Difficulty>("Medium");
   const [responseType, setResponseType] =
     useState<ResponseType>("multiple_choice");
   const [acceptedAnswer, setAcceptedAnswer] = useState("A");
+  const [passage, setPassage] = useState("");
+  const [stem, setStem] = useState("");
+  const [choiceTexts, setChoiceTexts] = useState<Record<ChoiceLabel, string>>({
+    A: "",
+    B: "",
+    C: "",
+    D: "",
+  });
   const [searchableText, setSearchableText] = useState("");
   const [promptFile, setPromptFile] = useState<File | null>(null);
   const [choicesFile, setChoicesFile] = useState<File | null>(null);
   const [rationaleFile, setRationaleFile] = useState<File | null>(null);
-  const [saving, setSaving] = useState<"draft" | "published" | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const normalizedSourceId = sourceId.trim();
   const duplicateSourceId = state.questions.some(
     (question) =>
       question.sourceId.toLowerCase() === normalizedSourceId.toLowerCase(),
   );
+  const targetTest = state.tests.find((test) => test.id === returnTarget?.testId);
+  const targetModule = targetTest?.modules.find(
+    (module) => module.id === returnTarget?.moduleId,
+  );
+  const targetLocked = state.assignments.some(
+    (assignment) => assignment.testId === targetTest?.id,
+  );
+  const isVerbal = section === "Reading and Writing";
+  const verbalContent = compactQuestionContent({
+    passage,
+    stem,
+    choices: CHOICE_LABELS.map((label) => ({
+      label,
+      text: choiceTexts[label],
+    })),
+  });
+  const previewContent = normalizeQuestionContent(verbalContent);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const testId = url.searchParams.get("testId");
+    const moduleId = url.searchParams.get("moduleId");
+    if (testId && moduleId) setReturnTarget({ testId, moduleId });
+  }, []);
+
+  useEffect(() => {
+    if (!targetModule || targetSectionApplied) return;
+    setSection(targetModule.section);
+    setTargetSectionApplied(true);
+  }, [targetModule, targetSectionApplied]);
+
+  useEffect(() => {
+    if (!isVerbal) return;
+    setResponseType("multiple_choice");
+    setAcceptedAnswer((current) =>
+      /^[A-D]$/i.test(current.trim()) ? current.toUpperCase() : "A",
+    );
+  }, [isVerbal]);
+
+  function updateChoice(label: ChoiceLabel, text: string) {
+    setChoiceTexts((current) => ({ ...current, [label]: text }));
+  }
+
+  function buildContent(): QuestionContent {
+    return isVerbal ? verbalContent : {};
+  }
 
   function validateForm() {
     if (!normalizedSourceId || !domain.trim() || !skill.trim()) {
@@ -147,46 +227,89 @@ export default function ManualQuestionImportPage() {
     if (duplicateSourceId) {
       throw new Error("A question with this ID already exists.");
     }
-    if (!promptFile) {
-      throw new Error("Add a question image.");
+    if (isVerbal) {
+      const contentErrors = validateQuestionContent({
+        section,
+        responseType,
+        content: verbalContent,
+      });
+      if (contentErrors.length) throw new Error(contentErrors[0]);
+      if (promptFile) validateQuestionImage(promptFile);
+    } else if (!promptFile) {
+      throw new Error("Add a math question image.");
+    } else {
+      validateQuestionImage(promptFile);
     }
-    validateQuestionImage(promptFile);
     if (rationaleFile) validateQuestionImage(rationaleFile);
-    if (choicesFile) validateQuestionImage(choicesFile);
+    if (!isVerbal && choicesFile) validateQuestionImage(choicesFile);
     if (
       responseType === "multiple_choice" &&
       !/^[A-D]$/i.test(acceptedAnswer.trim())
     ) {
       throw new Error("Multiple-choice answers must be A, B, C, or D.");
     }
-    if (!makeAcceptedAnswers(acceptedAnswer.split(",")).length) {
+    if (!makeAcceptedAnswers(answerValues()).length) {
       throw new Error("Add at least one accepted answer.");
     }
   }
 
-  async function saveQuestion(status: "draft" | "published") {
+  function answerValues() {
+    return responseType === "multiple_choice"
+      ? [acceptedAnswer.toUpperCase()]
+      : acceptedAnswer.split(",");
+  }
+
+  function attachToTargetModule(questionId: string) {
+    if (!targetTest || !targetModule || targetLocked) return;
+    if (targetModule.section !== section) return;
+    if (
+      targetTest.modules.some((module) =>
+        module.questions.some((question) => question.questionId === questionId),
+      )
+    ) {
+      return;
+    }
+    updateTest(targetTest.id, {
+      modules: targetTest.modules.map((module) =>
+        module.id === targetModule.id
+          ? {
+              ...module,
+              questions: [
+                ...sortModuleQuestions(module),
+                { questionId, order: module.questions.length + 1 },
+              ],
+            }
+          : module,
+      ),
+    });
+  }
+
+  async function saveQuestion() {
     setError("");
     try {
       validateForm();
-      setSaving(status);
+      setSaving(true);
       const id = crypto.randomUUID();
-      const prompt = await createManualQuestionAsset(
-        promptFile!,
-        "prompt",
-        0,
-        id,
-      );
-      const choices = choicesFile
-        ? await createManualQuestionAsset(choicesFile, "prompt", 1, id)
+      const prompt = promptFile
+        ? await createManualQuestionAsset(promptFile, "prompt", 0, id)
         : null;
+      const choices =
+        !isVerbal && choicesFile
+          ? await createManualQuestionAsset(choicesFile, "prompt", 1, id)
+          : null;
       const rationale = rationaleFile
         ? await createManualQuestionAsset(rationaleFile, "rationale", 0, id)
         : null;
-      const acceptedAnswers = makeAcceptedAnswers(
-        responseType === "multiple_choice"
-          ? [acceptedAnswer.toUpperCase()]
-          : acceptedAnswer.split(","),
-      );
+      const acceptedAnswers = makeAcceptedAnswers(answerValues());
+      const content = buildContent();
+      const extractedText = [
+        searchableText.trim(),
+        content.passage,
+        content.stem,
+        ...(content.choices?.map((choice) => choice.text) ?? []),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       const versionHash = await sha256(
         JSON.stringify({
           sourceId: normalizedSourceId,
@@ -196,8 +319,9 @@ export default function ManualQuestionImportPage() {
           difficulty,
           responseType,
           answers: acceptedAnswers.map((answer) => answer.normalizedValue),
+          content,
           files: [
-            prompt.fileHash,
+            prompt?.fileHash ?? "",
             choices?.fileHash ?? "",
             rationale?.fileHash ?? "",
           ],
@@ -214,22 +338,26 @@ export default function ManualQuestionImportPage() {
         difficulty,
         responseType,
         acceptedAnswers,
+        content,
         promptAssets: [
-          prompt.asset,
+          ...(prompt ? [prompt.asset] : []),
           ...(choices ? [choices.asset] : []),
         ],
         rationaleAssets: rationale ? [rationale.asset] : [],
-        extractedText: searchableText.trim(),
-        sourceFileName: "Manual image import",
+        extractedText,
+        sourceFileName: isVerbal
+          ? "Manual typed question"
+          : "Manual image import",
         sourceDocumentPath: `manual://${id}`,
         importedAt: new Date().toISOString(),
-        status,
+        status: "published",
       };
 
       if (isSupabaseConfigured() && !isDemoMode()) {
         await persistManualQuestion(question);
       }
       addQuestions([question]);
+      attachToTargetModule(question.id);
       router.push("/tutor/tests");
     } catch (saveError) {
       setError(
@@ -237,7 +365,7 @@ export default function ManualQuestionImportPage() {
           ? saveError.message
           : "The manual question could not be saved.",
       );
-      setSaving(null);
+      setSaving(false);
     }
   }
 
@@ -246,10 +374,27 @@ export default function ManualQuestionImportPage() {
       <PageHeader
         eyebrow="Test authoring"
         title="Add a question"
-        description="Add the question, answer key, and the details needed to find it while building a test."
+        description="Create a typed verbal question or import a math question as images."
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      {targetModule && (
+        <Card className="mb-6 flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <p className="text-sm font-black">
+              Creating for {targetModule.title}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Saved questions return to the test builder
+              {targetLocked ? "; this assigned test is locked" : " and are added to this module"}.
+            </p>
+          </div>
+          <Badge tone={targetLocked ? "amber" : "blue"}>
+            {targetModule.section}
+          </Badge>
+        </Card>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_430px]">
         <Card className="p-5 sm:p-7">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-[var(--blue)]">
@@ -271,7 +416,7 @@ export default function ManualQuestionImportPage() {
                   id="manual-source-id"
                   value={sourceId}
                   onChange={(event) => setSourceId(event.target.value)}
-                  placeholder="e.g. algebra-linear-001"
+                  placeholder="e.g. words-context-001"
                   aria-invalid={duplicateSourceId}
                 />
                 {duplicateSourceId && (
@@ -285,12 +430,13 @@ export default function ManualQuestionImportPage() {
                 <Select
                   id="manual-section"
                   value={section}
+                  disabled={Boolean(targetModule)}
                   onChange={(event) =>
                     setSection(event.target.value as Section)
                   }
                 >
-                  <option>Math</option>
                   <option>Reading and Writing</option>
+                  <option>Math</option>
                 </Select>
               </div>
             </div>
@@ -301,7 +447,7 @@ export default function ManualQuestionImportPage() {
                   id="manual-domain"
                   value={domain}
                   onChange={(event) => setDomain(event.target.value)}
-                  placeholder="e.g. Algebra"
+                  placeholder={isVerbal ? "e.g. Craft and Structure" : "e.g. Algebra"}
                 />
               </div>
               <div>
@@ -310,7 +456,7 @@ export default function ManualQuestionImportPage() {
                   id="manual-skill"
                   value={skill}
                   onChange={(event) => setSkill(event.target.value)}
-                  placeholder="e.g. Linear equations"
+                  placeholder={isVerbal ? "e.g. Words in context" : "e.g. Linear equations"}
                 />
               </div>
             </div>
@@ -336,6 +482,7 @@ export default function ManualQuestionImportPage() {
                 <Select
                   id="manual-response-type"
                   value={responseType}
+                  disabled={isVerbal}
                   onChange={(event) => {
                     const next = event.target.value as ResponseType;
                     setResponseType(next);
@@ -358,7 +505,7 @@ export default function ManualQuestionImportPage() {
                     value={acceptedAnswer}
                     onChange={(event) => setAcceptedAnswer(event.target.value)}
                   >
-                    {["A", "B", "C", "D"].map((choice) => (
+                    {CHOICE_LABELS.map((choice) => (
                       <option key={choice}>{choice}</option>
                     ))}
                   </Select>
@@ -372,56 +519,151 @@ export default function ManualQuestionImportPage() {
                 )}
               </div>
             </div>
+
+            {isVerbal ? (
+              <div className="space-y-4 rounded-xl border bg-slate-50 p-4">
+                <div>
+                  <FieldLabel htmlFor="manual-passage">
+                    Passage or context
+                  </FieldLabel>
+                  <Textarea
+                    id="manual-passage"
+                    rows={5}
+                    value={passage}
+                    onChange={(event) => setPassage(event.target.value)}
+                    placeholder="Optional passage, note, poem excerpt, or context."
+                  />
+                </div>
+                <div>
+                  <FieldLabel htmlFor="manual-stem">
+                    Question stem <span className="text-rose-600">*</span>
+                  </FieldLabel>
+                  <Textarea
+                    id="manual-stem"
+                    rows={3}
+                    value={stem}
+                    onChange={(event) => setStem(event.target.value)}
+                    placeholder="Type the question students should answer."
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {CHOICE_LABELS.map((choice) => (
+                    <div key={choice}>
+                      <FieldLabel htmlFor={`manual-choice-${choice}`}>
+                        Choice {choice} <span className="text-rose-600">*</span>
+                      </FieldLabel>
+                      <Textarea
+                        id={`manual-choice-${choice}`}
+                        rows={3}
+                        value={choiceTexts[choice]}
+                        onChange={(event) =>
+                          updateChoice(choice, event.target.value)
+                        }
+                        placeholder={`Answer choice ${choice}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                Math content is imported as images. Use the image panel for the
+                problem, graph, equations, and answer choices.
+              </div>
+            )}
+
             <div>
               <FieldLabel htmlFor="manual-search-text">
-                Searchable text or notes
+                Searchable notes
               </FieldLabel>
               <Textarea
                 id="manual-search-text"
                 rows={3}
                 value={searchableText}
                 onChange={(event) => setSearchableText(event.target.value)}
-                placeholder="Optional text that helps you find this question later"
+                placeholder="Optional notes that help you find this question later"
               />
             </div>
           </div>
         </Card>
 
-        <Card className="p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-black">Image assets</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Images retain their original resolution.
-              </p>
+        <div className="space-y-6">
+          <Card className="p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-black">Image assets</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Images retain their original resolution.
+                </p>
+              </div>
+              <Badge tone="blue">{isVerbal ? "Optional" : "Required"}</Badge>
             </div>
-            <Badge tone="blue">Private rationale</Badge>
-          </div>
-          <div className="mt-6 space-y-6">
-            <ImageUploadField
-              id="manual-prompt-image"
-              label="Question image"
-              description="Stem, passage, graph, table, or equation."
-              file={promptFile}
-              required
-              onChange={setPromptFile}
-            />
-            <ImageUploadField
-              id="manual-choices-image"
-              label="Choices image"
-              description="Optional if the answer choices are already in the question image."
-              file={choicesFile}
-              onChange={setChoicesFile}
-            />
-            <ImageUploadField
-              id="manual-rationale-image"
-              label="Rationale image"
-              description="Optional explanation image for future use."
-              file={rationaleFile}
-              onChange={setRationaleFile}
-            />
-          </div>
-        </Card>
+            <div className="mt-6 space-y-6">
+              <ImageUploadField
+                id="manual-prompt-image"
+                label={isVerbal ? "Graph or table image" : "Question image"}
+                description={
+                  isVerbal
+                    ? "Optional support image for graph/table verbal questions."
+                    : "Problem statement, graph, table, equation, or combined prompt."
+                }
+                file={promptFile}
+                required={!isVerbal}
+                onChange={setPromptFile}
+              />
+              {!isVerbal && (
+                <ImageUploadField
+                  id="manual-choices-image"
+                  label="Choices image"
+                  description="Optional if answer choices are already in the question image."
+                  file={choicesFile}
+                  onChange={setChoicesFile}
+                />
+              )}
+              <ImageUploadField
+                id="manual-rationale-image"
+                label="Rationale image"
+                description="Optional explanation image for future use."
+                file={rationaleFile}
+                onChange={setRationaleFile}
+              />
+            </div>
+          </Card>
+
+          {isVerbal && (
+            <Card className="p-5 sm:p-6">
+              <div className="flex items-center gap-2">
+                <ImagePlus className="h-4 w-4 text-[var(--blue)]" />
+                <h2 className="font-black">Live preview</h2>
+              </div>
+              <div className="mt-4 space-y-4 rounded-xl border bg-white p-4">
+                {previewContent.passage && (
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                    {previewContent.passage}
+                  </p>
+                )}
+                <p className="whitespace-pre-wrap text-base font-bold leading-7">
+                  {previewContent.stem || "Question stem will appear here."}
+                </p>
+                <div className="grid gap-2">
+                  {CHOICE_LABELS.map((choice) => (
+                    <div
+                      key={choice}
+                      className="flex gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm"
+                    >
+                      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border bg-white text-xs font-black">
+                        {choice}
+                      </span>
+                      <span className="whitespace-pre-wrap">
+                        {choiceTexts[choice] || `Choice ${choice}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
       </div>
 
       <Card className="mt-6 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -433,21 +675,19 @@ export default function ManualQuestionImportPage() {
             </div>
           ) : (
             <div className="flex items-center gap-2 text-sm text-slate-500">
-              <ImagePlus className="h-4 w-4" />
+              <Plus className="h-4 w-4" />
               The question will be available in the test builder immediately.
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            icon={<Check className="h-4 w-4" />}
-            loading={saving === "published"}
-            disabled={Boolean(saving)}
-            onClick={() => void saveQuestion("published")}
-          >
-            Save question
-          </Button>
-        </div>
+        <Button
+          icon={<Check className="h-4 w-4" />}
+          loading={saving}
+          disabled={saving}
+          onClick={() => void saveQuestion()}
+        >
+          Save question
+        </Button>
       </Card>
     </>
   );

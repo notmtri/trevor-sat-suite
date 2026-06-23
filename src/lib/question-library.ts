@@ -1,4 +1,5 @@
 import type { AppState, Question, QuestionStatus } from "@/lib/domain";
+import { questionSearchText } from "@/lib/question-content";
 
 export type QuestionLibraryFilters = {
   search: string;
@@ -15,15 +16,7 @@ export function filterQuestions(
   const search = filters.search.trim().toLowerCase();
   return questions.filter((question) => {
     const tags = question.tags ?? [];
-    const haystack = [
-      question.sourceId,
-      question.domain,
-      question.skill,
-      question.extractedText,
-      tags.join(" "),
-    ]
-      .join(" ")
-      .toLowerCase();
+    const haystack = questionSearchText(question);
     return (
       (!search || haystack.includes(search)) &&
       (filters.section === "all" || question.section === filters.section) &&

@@ -5,6 +5,10 @@ import type {
   ReleasedReport,
   ResponseRecord,
 } from "@/lib/domain";
+import {
+  formatCorrectAnswerForReview,
+  formatResponseForReview,
+} from "@/lib/question-content";
 import { isResponseCorrect } from "@/lib/scoring";
 
 export type ReviewQuestion = {
@@ -49,10 +53,8 @@ export function buildAttemptReview(
     return {
       question,
       response,
-      selectedAnswer: response?.value.trim() || "No answer",
-      correctAnswer:
-        question.acceptedAnswers.map((answer) => answer.value).join(", ") ||
-        "Not configured",
+      selectedAnswer: formatResponseForReview(question, response?.value ?? ""),
+      correctAnswer: formatCorrectAnswerForReview(question),
       correct,
       flagged: Boolean(response?.flagged),
       secondsSpent: response?.secondsSpent ?? 0,

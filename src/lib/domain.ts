@@ -3,6 +3,7 @@ export type Difficulty = "Easy" | "Medium" | "Hard";
 export type ResponseType = "multiple_choice" | "student_produced";
 export type QuestionStatus = "draft" | "published" | "rejected" | "archived";
 export type FeedbackPolicy = "immediate" | "after_submission" | "tutor_release";
+export type ChoiceLabel = "A" | "B" | "C" | "D";
 export type TestMode = "practice" | "exam";
 export type WorkType =
   | "custom"
@@ -29,6 +30,17 @@ export type AcceptedAnswer = {
   normalizedValue: string;
 };
 
+export type QuestionChoice = {
+  label: ChoiceLabel;
+  text: string;
+};
+
+export type QuestionContent = {
+  passage?: string;
+  stem?: string;
+  choices?: QuestionChoice[];
+};
+
 export type Question = {
   id: string;
   sourceId: string;
@@ -40,6 +52,7 @@ export type Question = {
   difficulty: Difficulty;
   responseType: ResponseType;
   acceptedAnswers: AcceptedAnswer[];
+  content?: QuestionContent;
   promptAssets: QuestionAsset[];
   rationaleAssets: QuestionAsset[];
   extractedText: string;

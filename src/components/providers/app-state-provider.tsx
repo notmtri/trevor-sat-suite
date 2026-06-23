@@ -75,6 +75,8 @@ type AppStateContextValue = {
   refresh: () => Promise<void>;
   addQuestions: (questions: Question[]) => void;
   updateQuestion: (id: string, changes: Partial<Question>) => void;
+  saveQuestionChanges: (id: string, changes: Partial<Question>) => Promise<void>;
+  duplicateQuestion: (id: string) => Promise<Question>;
   deleteQuestion: (id: string) => Promise<void>;
   addStudent: (student: Student) => void;
   updateStudent: (id: string, changes: Partial<Student>) => void;
@@ -203,6 +205,85 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       persist(() => persistQuestionChanges(id, changes));
     },
     [persist],
+  );
+
+  const saveQuestionChanges = useCallback(
+    async (id: string, changes: Partial<Question>) => {
+      if (!demo && isSupabaseConfigured()) {
+        await persistQuestionChanges(id, changes);
+      }
+      setState((current) => ({
+        ...current,
+        questions: current.questions.map((question) =>
+          question.id === id ? { ...question, ...changes } : question,
+        ),
+      }));
+    },
+    [demo],
+  );
+
+  const duplicateQuestion = useCallback(
+    async (id: string) => {
+      const original = state.questions.find((question) => question.id === id);
+      if (!original) throw new Error("Question not found.");
+      const baseSourceId = `${original.sourceId}-copy`;
+      let sourceId = baseSourceId;
+      let suffix = 2;
+      const usedSourceIds = new Set(
+        state.questions.map((question) => question.sourceId.toLowerCase()),
+      );
+      while (usedSourceIds.has(sourceId.toLowerCase())) {
+        sourceId = `${baseSourceId}-${suffix}`;
+        suffix += 1;
+      }
+      const duplicate: Question = {
+        ...original,
+        id: crypto.randomUUID(),
+        sourceId,
+        versionHash: `${original.versionHash}-copy-${crypto.randomUUID()}`,
+        importedAt: new Date().toISOString(),
+        status: "published",
+        promptAssets: original.promptAssets.map((asset) => ({
+          ...asset,
+          id: crypto.randomUUID(),
+        })),
+        rationaleAssets: original.rationaleAssets.map((asset) => ({
+          ...asset,
+          id: crypto.randomUUID(),
+        })),
+        acceptedAnswers: original.acceptedAnswers.map((answer, index) => ({
+          ...answer,
+          id: `answer-${index}-${answer.normalizedValue}-${crypto.randomUUID()}`,
+        })),
+      };
+      if (!demo && isSupabaseConfigured()) {
+        // Manual persistence can upload local assets, but duplicated remote assets
+        // need server-side copying. The admin route handles that safely.
+        await fetch("/api/admin/questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            duplicateId: original.id,
+            id: duplicate.id,
+            sourceId,
+            versionHash: duplicate.versionHash,
+          }),
+        }).then(async (response) => {
+          const payload = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          if (!response.ok) {
+            throw new Error(payload.error ?? "Question could not be duplicated.");
+          }
+        });
+      }
+      setState((current) => ({
+        ...current,
+        questions: [duplicate, ...current.questions],
+      }));
+      return duplicate;
+    },
+    [demo, state.questions],
   );
 
   const deleteQuestion = useCallback(
@@ -459,6 +540,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       addQuestions,
       updateQuestion,
+      saveQuestionChanges,
+      duplicateQuestion,
       deleteQuestion,
       addStudent,
       updateStudent,
@@ -481,6 +564,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refresh,
       addQuestions,
       updateQuestion,
+      saveQuestionChanges,
+      duplicateQuestion,
       deleteQuestion,
       addStudent,
       updateStudent,

@@ -9,6 +9,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  FileText,
   Pencil,
   Plus,
   RotateCcw,
@@ -23,7 +24,7 @@ import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FieldLabel, Input, Select } from "@/components/ui/field";
+import { FieldLabel, Input, Select, Textarea } from "@/components/ui/field";
 import type {
   Assignment,
   Question,
@@ -36,6 +37,17 @@ import {
   getEffectiveAssignmentWindow,
 } from "@/lib/assignment-utils";
 import {
+  CHOICE_LABELS,
+  compactQuestionContent,
+  formatChoiceLabel,
+  normalizeQuestionContent,
+  questionHasTypedContent,
+  questionPreviewText,
+  questionSearchText,
+  validateQuestionContent,
+} from "@/lib/question-content";
+import { makeAcceptedAnswers } from "@/lib/scoring";
+import {
   modulesForWorkType,
   questionCountForTest,
   validateTestForAssignment,
@@ -43,7 +55,6 @@ import {
   WORK_TYPES,
   workTypeLabel,
 } from "@/lib/work-types";
-import { makeAcceptedAnswers } from "@/lib/scoring";
 
 function shiftDays(value: string, days: number) {
   const date = new Date(value);

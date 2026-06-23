@@ -13,6 +13,21 @@ const updateQuestionSchema = z
     skill: z.string().min(1).max(160).optional(),
     difficulty: z.enum(["Easy", "Medium", "Hard"]).optional(),
     tags: z.array(z.string().min(1).max(40)).max(20).optional(),
+    content: z
+      .object({
+        passage: z.string().max(20_000).optional(),
+        stem: z.string().max(20_000).optional(),
+        choices: z
+          .array(
+            z.object({
+              label: z.enum(["A", "B", "C", "D"]),
+              text: z.string().max(5_000),
+            }),
+          )
+          .max(4)
+          .optional(),
+      })
+      .optional(),
     acceptedAnswers: z
       .array(
         z.object({
@@ -29,11 +44,180 @@ const updateQuestionSchema = z
   })
   .refine((value) => value.acceptedAnswers === undefined || Boolean(value.id), {
     message: "Answer keys can be updated for one question at a time.",
+  })
+  .refine((value) => value.content === undefined || Boolean(value.id), {
+    message: "Question content can be updated for one question at a time.",
   });
 
 const deleteQuestionSchema = z.object({
   id: z.string().uuid(),
 });
+
+const duplicateQuestionSchema = z.object({
+  duplicateId: z.string().uuid(),
+  id: z.string().uuid(),
+  sourceId: z.string().min(1).max(160),
+  versionHash: z.string().min(1).max(300),
+});
+
+export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient();
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "Supabase is not configured." },
+      { status: 503 },
+    );
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || user.app_metadata.role !== "tutor") {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+  const parsed = duplicateQuestionSchema.safeParse(
+    await request.json().catch(() => null),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid question duplication request." },
+      { status: 400 },
+    );
+  }
+
+  const { data: sourceQuestion, error: questionError } = await supabase
+    .from("questions")
+    .select("*")
+    .eq("id", parsed.data.duplicateId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (questionError) {
+    return NextResponse.json({ error: questionError.message }, { status: 500 });
+  }
+  if (!sourceQuestion?.current_version_id) {
+    return NextResponse.json({ error: "Question not found." }, { status: 404 });
+  }
+
+  const { data: existingSourceId, error: sourceIdError } = await supabase
+    .from("questions")
+    .select("id")
+    .eq("owner_id", user.id)
+    .eq("source_id", parsed.data.sourceId)
+    .maybeSingle();
+  if (sourceIdError) {
+    return NextResponse.json({ error: sourceIdError.message }, { status: 500 });
+  }
+  if (existingSourceId) {
+    return NextResponse.json(
+      { error: "A question with this ID already exists." },
+      { status: 409 },
+    );
+  }
+
+  const { data: sourceVersion, error: versionError } = await supabase
+    .from("question_versions")
+    .select("*")
+    .eq("id", sourceQuestion.current_version_id)
+    .single();
+  if (versionError) {
+    return NextResponse.json({ error: versionError.message }, { status: 500 });
+  }
+
+  const [assetsResult, answersResult] = await Promise.all([
+    supabase
+      .from("question_assets")
+      .select("*")
+      .eq("question_version_id", sourceVersion.id),
+    supabase
+      .from("accepted_answers")
+      .select("*")
+      .eq("question_version_id", sourceVersion.id),
+  ]);
+  const lookupError = assetsResult.error ?? answersResult.error;
+  if (lookupError) {
+    return NextResponse.json({ error: lookupError.message }, { status: 500 });
+  }
+
+  const { error: insertQuestionError } = await supabase.from("questions").insert({
+    id: parsed.data.id,
+    owner_id: user.id,
+    source_id: parsed.data.sourceId,
+    assessment: sourceQuestion.assessment,
+    section: sourceQuestion.section,
+    domain: sourceQuestion.domain,
+    skill: sourceQuestion.skill,
+    difficulty: sourceQuestion.difficulty,
+    status: "published",
+    tags: Array.isArray(sourceQuestion.tags) ? sourceQuestion.tags : [],
+  });
+  if (insertQuestionError) {
+    return NextResponse.json(
+      { error: insertQuestionError.message },
+      { status: 500 },
+    );
+  }
+
+  const { data: version, error: insertVersionError } = await supabase
+    .from("question_versions")
+    .insert({
+      question_id: parsed.data.id,
+      source_document_id: sourceVersion.source_document_id,
+      version_hash: parsed.data.versionHash,
+      response_type: sourceVersion.response_type,
+      content: sourceVersion.content ?? {},
+      extracted_text: sourceVersion.extracted_text ?? "",
+      review_notes: sourceVersion.review_notes ?? "",
+    })
+    .select("id")
+    .single();
+  if (insertVersionError) {
+    return NextResponse.json(
+      { error: insertVersionError.message },
+      { status: 500 },
+    );
+  }
+
+  const assetRows = (assetsResult.data ?? []).map((asset) => ({
+    question_version_id: version.id,
+    kind: asset.kind,
+    asset_order: asset.asset_order,
+    source_page: asset.source_page,
+    storage_path: asset.storage_path,
+    width: asset.width,
+    height: asset.height,
+  }));
+  if (assetRows.length) {
+    const { error } = await supabase.from("question_assets").insert(assetRows);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+  }
+
+  const answerRows = (answersResult.data ?? []).map((answer) => ({
+    question_version_id: version.id,
+    value: answer.value,
+    normalized_value: answer.normalized_value,
+  }));
+  if (answerRows.length) {
+    const { error } = await supabase.from("accepted_answers").insert(answerRows);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+  }
+
+  const { error: currentVersionError } = await supabase
+    .from("questions")
+    .update({ current_version_id: version.id })
+    .eq("id", parsed.data.id)
+    .eq("owner_id", user.id);
+  if (currentVersionError) {
+    return NextResponse.json(
+      { error: currentVersionError.message },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ ok: true });
+}
 
 export async function PATCH(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -58,7 +242,7 @@ export async function PATCH(request: Request) {
       { status: 400 },
     );
   }
-  const { id, ids, acceptedAnswers, ...changes } = parsed.data;
+  const { id, ids, acceptedAnswers, content, ...changes } = parsed.data;
   if (
     changes.status === undefined &&
     changes.section === undefined &&
@@ -66,6 +250,7 @@ export async function PATCH(request: Request) {
     changes.skill === undefined &&
     changes.difficulty === undefined &&
     changes.tags === undefined &&
+    content === undefined &&
     acceptedAnswers === undefined
   ) {
     return NextResponse.json(
@@ -103,6 +288,15 @@ export async function PATCH(request: Request) {
         value: answer.value,
         normalized_value: answer.normalizedValue,
       })),
+    });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+  }
+  if (content !== undefined && id) {
+    const { error } = await supabase.rpc("update_question_content", {
+      target_question_id: id,
+      content_value: content,
     });
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 409 });

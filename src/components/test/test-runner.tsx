@@ -31,7 +31,7 @@ import {
   X,
   ZoomIn,
 } from "lucide-react";
-import { QuestionAssetImage } from "@/components/question-asset-image";
+import { QuestionContentView } from "@/components/question-content-view";
 import { useAppState } from "@/components/providers/app-state-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,7 @@ import type {
   TestModule,
 } from "@/lib/domain";
 import { preloadQuestionAssets } from "@/lib/question-assets";
+import { CHOICE_LABELS, formatChoiceLabel } from "@/lib/question-content";
 import { isResponseCorrect, scoreResponses } from "@/lib/scoring";
 import {
   isDemoMode,
@@ -1473,15 +1474,10 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                   marginBottom: `${Math.max(0, (zoom - 1) * 45)}%`,
                 }}
               >
-                <div className="space-y-3">
-                  {activeQuestion.promptAssets.map((asset) => (
-                    <QuestionAssetImage
-                      key={asset.id}
-                      asset={asset}
-                      alt={`Question ${questionIndex + 1}`}
-                    />
-                  ))}
-                </div>
+                <QuestionContentView
+                  question={activeQuestion}
+                  imageAlt={`Question ${questionIndex + 1}`}
+                />
               </div>
               {currentHighlights.map((highlight, index) => (
                 <button
@@ -1521,14 +1517,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                 </div>
                 {activeQuestion.responseType === "multiple_choice" ? (
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {["A", "B", "C", "D"].map((choice) => {
+                    {CHOICE_LABELS.map((choice) => {
                       const struck = currentEliminated.includes(choice);
                       return (
                         <div key={choice} className="flex gap-2">
                           <button
                             type="button"
                             className={cn(
-                              "focus-ring flex h-12 flex-1 items-center gap-3 rounded-xl border px-4 text-left font-black transition",
+                              "focus-ring flex min-h-12 flex-1 items-start gap-3 rounded-xl border px-4 py-3 text-left font-black transition",
                               selected === choice
                                 ? "border-[var(--blue)] bg-blue-50 text-[var(--navy)] ring-2 ring-blue-100"
                                 : "hover:bg-slate-50",
@@ -1545,14 +1541,16 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                           >
                             <span
                               className={cn(
-                                "grid h-7 w-7 place-items-center rounded-full border text-xs",
+                                "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs",
                                 selected === choice &&
                                   "border-[var(--blue)] bg-[var(--blue)] text-white",
                               )}
                             >
                               {choice}
                             </span>
-                            Choice {choice}
+                            <span className="min-w-0 whitespace-pre-wrap">
+                              {formatChoiceLabel(activeQuestion, choice)}
+                            </span>
                           </button>
                           <button
                             type="button"
@@ -1661,14 +1659,14 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
             </span>
             {activeQuestion.responseType === "multiple_choice" ? (
               <div className="mt-4 grid gap-3">
-                {["A", "B", "C", "D"].map((choice) => {
+                {CHOICE_LABELS.map((choice) => {
                   const struck = currentEliminated.includes(choice);
                   return (
                     <div key={choice} className="flex gap-2">
                       <button
                         type="button"
                         className={cn(
-                          "focus-ring flex h-12 flex-1 items-center gap-3 rounded-xl border px-4 text-left font-black transition",
+                          "focus-ring flex min-h-12 flex-1 items-start gap-3 rounded-xl border px-4 py-3 text-left font-black transition",
                           selected === choice
                             ? "border-[var(--blue)] bg-blue-50 text-[var(--navy)] ring-2 ring-blue-100"
                             : "hover:bg-slate-50",
@@ -1685,14 +1683,16 @@ export function TestRunner({ attemptId }: { attemptId: string }) {
                       >
                         <span
                           className={cn(
-                            "grid h-7 w-7 place-items-center rounded-full border text-xs",
+                            "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs",
                             selected === choice &&
                               "border-[var(--blue)] bg-[var(--blue)] text-white",
                           )}
                         >
                           {choice}
                         </span>
-                        Choice {choice}
+                        <span className="min-w-0 whitespace-pre-wrap">
+                          {formatChoiceLabel(activeQuestion, choice)}
+                        </span>
                       </button>
                       <button
                         type="button"
