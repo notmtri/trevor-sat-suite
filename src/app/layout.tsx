@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { AppStateProvider } from "@/components/providers/app-state-provider";
 import "./globals.css";
 
@@ -20,6 +21,7 @@ export default function RootLayout({
     <html lang="en">
       <body style={{ "--font-app": "Arial" } as React.CSSProperties}>
         <AppStateProvider>{children}</AppStateProvider>
+        <Analytics />
       </body>
     </html>
   );
